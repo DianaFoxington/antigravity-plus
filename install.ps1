@@ -5,8 +5,8 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-$ScriptDir = if ($MyInvocation.MyCommand.Definition) { Split-Path -Parent $MyInvocation.MyCommand.Definition } else { "" }
-$CliPath = if ($ScriptDir) { Join-Path $ScriptDir "cli.js" } else { "" }
+$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { "" }
+$CliPath = if ($ScriptDir -and (Test-Path -LiteralPath $ScriptDir)) { Join-Path $ScriptDir "cli.js" } else { "" }
 
 if (-not $CliPath -or -not (Test-Path -LiteralPath $CliPath)) {
     $InstallHome = Join-Path $HOME ".gemini\antigravity-plus-src"
