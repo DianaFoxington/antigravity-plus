@@ -1,4 +1,14 @@
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+
+function Download-FastFile {
+    param([string]$Url, [string]$OutFile)
+    if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+        & curl.exe -fL --retry 2 -o $OutFile $Url
+        if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $OutFile)) { return }
+    }
+    Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
+}
 
 function Refresh-SessionPath {
     $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -51,7 +61,7 @@ function Install-AntigravityDesktop {
         if (-not $m.Success) { throw "Could not parse official installer URL." }
         $exeUrl = $m.Groups[1].Value.Trim()
         $exePath = Join-Path $env:TEMP "Antigravity-Setup.exe"
-        Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -UseBasicParsing
+        Download-FastFile -Url $exeUrl -OutFile $exePath
         Start-Process -FilePath $exePath -ArgumentList "/S" -Wait
         Remove-Item -LiteralPath $exePath -Force -ErrorAction SilentlyContinue
     } catch {
@@ -69,7 +79,7 @@ if (-not $CliPath -or -not (Test-Path -LiteralPath $CliPath)) {
     $InstallHome = Join-Path $HOME ".gemini\antigravity-plus-src"
     $ZipPath = Join-Path $env:TEMP "antigravity-plus-main.zip"
     Write-Host "Downloading Antigravity Plus from GitHub..." -ForegroundColor Cyan
-    Invoke-WebRequest -Uri "https://github.com/DianaFoxington/antigravity-plus/archive/refs/heads/main.zip" -OutFile $ZipPath -UseBasicParsing
+    Download-FastFile -Url "https://github.com/DianaFoxington/antigravity-plus/archive/refs/heads/main.zip" -OutFile $ZipPath
     if (Test-Path -LiteralPath $InstallHome) { Remove-Item -LiteralPath $InstallHome -Recurse -Force }
     $ExtractTmp = Join-Path $env:TEMP ("agyp-" + [Guid]::NewGuid().ToString("N"))
     Expand-Archive -Path $ZipPath -DestinationPath $ExtractTmp -Force
