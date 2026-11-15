@@ -1,30 +1,28 @@
 <div align="center">
 
-<img src="./assets/banner.svg" alt="Antigravity Plus — Multi-Provider Gateway & Unlocker" width="100%" />
+<img src="./assets/banner.svg" alt="Antigravity Plus" width="100%" />
 
 <br />
 
 [![CI](https://img.shields.io/github/actions/workflow/status/DianaFoxington/antigravity-plus/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/DianaFoxington/antigravity-plus/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/DianaFoxington/antigravity-plus?style=for-the-badge&color=f97316)](https://github.com/DianaFoxington/antigravity-plus/releases)
-[![Stars](https://img.shields.io/github/stars/DianaFoxington/antigravity-plus?style=for-the-badge&color=eab308)](https://github.com/DianaFoxington/antigravity-plus/stargazers)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-1e293b?style=for-the-badge)](./README.md#quick-start)
-[![Dependencies](https://img.shields.io/badge/Dependencies-Zero%20npm-22c55e?style=for-the-badge)](./package.json)
-[![Languages](https://img.shields.io/badge/Languages-12%20%2B%20RTL-6366f1?style=for-the-badge)](./README.md#12-language-ui--rtl-engine)
+[![Platform](https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-1e293b?style=for-the-badge)](./README.md#install)
+[![Dependencies](https://img.shields.io/badge/npm%20deps-0-22c55e?style=for-the-badge)](./package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-0ea5e9?style=for-the-badge)](./LICENSE)
 
-<br />
-
-[One-Line Install](#quick-start) · [Comparison](#stock-antigravity-vs-antigravity-plus) · [Screenshots](#screenshots) · [Architecture](#architecture) · [CLI](#cli-commands) · [راهنمای فارسی](#راهنمای-فارسی-persian-guide)
+[Install](#install) · [What it changes](#what-it-changes) · [Screenshots](#screenshots) · [How it works](#how-it-works) · [CLI](#cli) · [فارسی](#راهنمای-فارسی)
 
 </div>
 
 ---
 
-## Quick Start
+Stock Antigravity ties you to one Google login, caps context checkpoints at `256K` in `language_server`, hides internal flags behind production checks, and overwrites changes whenever it auto-updates.
 
-> **Prerequisite:** [Node.js >= 18](https://nodejs.org/) and **Antigravity Desktop** installed. Zero external npm packages required.
+**Antigravity Plus** patches the Electron bundle (`app.asar`) and the `language_server` binary in place on your machine. Everything runs locally on Node.js stdlib (`>= 18`), no third-party npm packages, no external binaries bundled, and your keys stay under `~/.gemini/`.
 
-### Option A: One-Line Install (Fastest)
+## Install
+
+Requires **Node.js 18+** and **Antigravity Desktop** installed.
 
 **Windows (PowerShell):**
 ```powershell
@@ -36,35 +34,37 @@ irm https://raw.githubusercontent.com/DianaFoxington/antigravity-plus/main/insta
 curl -fsSL https://raw.githubusercontent.com/DianaFoxington/antigravity-plus/main/install.sh | bash
 ```
 
-### Option B: Clone & Run Locally
+Or clone and run it yourself:
 
 ```bash
 git clone https://github.com/DianaFoxington/antigravity-plus.git
 cd antigravity-plus
 
-# Windows:
+# Windows
 .\install.ps1
 
-# macOS & Linux:
+# macOS / Linux
 chmod +x install.sh uninstall.sh && ./install.sh
 ```
 
+To undo everything and restore the original `app.asar` and `language_server` from backup, run `uninstall.ps1` / `./uninstall.sh` or `node cli.js unpatch`.
+
 ---
 
-## Stock Antigravity vs. Antigravity Plus
+## What it changes
 
-| Feature | Stock Antigravity | Antigravity Plus |
+| Area | Stock | Patched |
 | :--- | :--- | :--- |
-| **Model Providers** | Official Google login only | **26+ built-in presets** (Gemini, OpenAI, Anthropic, OpenRouter, DeepSeek, Groq, xAI, Ollama, LM Studio, vLLM, Custom) |
-| **Auth Switching** | Single account, manual sign-out | **~300ms zero-reload switcher** between multi-slot **Google OAuth Vault** & **API Keys** |
-| **Context Window Cap** | Hardcoded `256K` checkpoint limit | **Dynamic binary patch (`2M` / `1M` native limit)** in `language_server` (`x64` & `arm64`) |
-| **Quota Exhaustion** | Manual account switching on `429` | **Per-`(Account, Model)` auto-rotation** with configurable threshold & cooldown |
-| **Proxy / Tunneling** | System VPN / TUN required | **Built-in pure Node `HTTP / HTTPS / SOCKS5`** TLS tunnel with remote DNS |
-| **Hidden Labs & Modes** | Locked in production (`Mendel` off) | **60+ unlocked flags** (`Chief of Staff`, `Turbo/Auto`, `Battle Mode`, `Split View`, `Terminal V2`, etc.) |
-| **Plugin Installation** | Curated marketplace only | **One-click `Install from GitHub`** (`SKILL.md`, `plugin.json`, `.mcp.json`, `AGENTS.md`) |
-| **UI Languages** | English only | **12 languages instant switch** + **Unicode RTL/Bidi engine** (`FA`, `AR`, `ZH`, `RU`, `JA`, `KO`, `DE`, `FR`, `ES`, `PT`, `TR`, `EN`) |
-| **Telemetry** | Static percentage ring | **Live SSE `tok/s`, `TTFT (ms)`, session tokens & `$` cost meter** |
-| **App Updates** | Wipes custom modifications | **Auto Re-Patch Watcher** restores everything in ~2s after every update |
+| Providers | Google login only | 26 presets (OpenAI, Anthropic, Gemini, OpenRouter, DeepSeek, Groq, xAI, Ollama, LM Studio, vLLM, custom endpoints) |
+| Account switching | Sign out and log back in | Multi-slot Google OAuth keyring vault + API keys under **Settings -> API Key & Account**, ~300ms switch without reload |
+| Context cap | Hardcoded `256K` checkpoint (`0x3E800`) | Byte-pattern binary patch raises the limit in `language_server` (`x64` / `arm64`, auto `codesign` on macOS) to `1M` / `2M` |
+| Rate limits (`429`) | Stops until you switch manually | Tracks quota per `(account, model)` pair — moves only that model to the next account/key and keeps the rest where they are |
+| Proxy | Needs system VPN / TUN | Built-in `HTTP / HTTPS / SOCKS5` TLS tunnel (with remote DNS) applied to models, OAuth login, and plugin fetches |
+| Hidden flags | Disabled in release builds | Unlocks `SetMendelFlagOverrides` (Chief of Staff, Turbo/Auto mode, Battle Mode, Split View, Terminal V2, etc.) |
+| Plugins | Marketplace list only | **Install from GitHub** button in Customizations (`SKILL.md`, `plugin.json`, `.mcp.json`, `AGENTS.md`, `.zip`) |
+| UI language | English only | Live 12-language switcher (`FA`, `AR`, `ZH`, `RU`, `JA`, `KO`, `DE`, `FR`, `ES`, `PT`, `TR`, `EN`) + RTL/Bidi isolation |
+| Stats | Plain context percentage | Live `tok/s`, time-to-first-token (`ms`), session tokens, and rough `$` cost over SSE |
+| App updates | Wipes local edits | Background watcher (`Task Scheduler` / `LaunchAgent` / `systemd --user`) re-patches in ~2s after an update |
 
 ---
 
@@ -73,133 +73,106 @@ chmod +x install.sh uninstall.sh && ./install.sh
 <table>
   <tr>
     <td align="center" width="50%">
-      <strong>Multi-Provider Gateway & Key Vault</strong><br />
-      <sub>26 built-in presets, multi-account API keys, & 300ms OAuth switching</sub><br /><br />
+      <strong>API Keys &amp; Providers</strong><br /><br />
       <img src="./assets/multi-provider-gateway.png" alt="Multi-Provider Gateway & API Keys" width="100%" />
     </td>
     <td align="center" width="50%">
-      <strong>Built-in HTTP/SOCKS5 Proxy & Per-Model Rotation</strong><br />
-      <sub>Pure Node TLS tunneling + automatic quota exhaustion failover per (Account, Model)</sub><br /><br />
+      <strong>Proxy &amp; Per-Model Quota Rotation</strong><br /><br />
       <img src="./assets/proxy-quota-rotation.png" alt="Built-in HTTP/SOCKS5 Proxy and Quota Rotation" width="100%" />
     </td>
   </tr>
   <tr>
     <td align="center" width="50%">
-      <strong>12-Language Instant Switcher (Searchable Popover)</strong><br />
-      <sub>Switch all menus, settings, and dialogs live with zero app reload</sub><br /><br />
+      <strong>Language Switcher (Appearance)</strong><br /><br />
       <img src="./assets/language-switcher.png" alt="12-Language Searchable Switcher" width="100%" />
     </td>
     <td align="center" width="50%">
-      <strong>Full RTL & Unicode Bidi Engine (Persian / Arabic)</strong><br />
-      <sub>Automatic RLI/LRI isolation keeps mixed technical terms & metrics clean</sub><br /><br />
-      <img src="./assets/rtl-localization-fa.png" alt="Full Persian RTL Localization" width="100%" />
+      <strong>Persian RTL + Bidi</strong><br /><br />
+      <img src="./assets/rtl-localization-fa.png" alt="Persian RTL Localization" width="100%" />
     </td>
   </tr>
   <tr>
     <td align="center" colspan="2">
-      <strong>One-Click Install from GitHub (Customizations)</strong><br />
-      <sub>Install any GitHub repo, <code>SKILL.md</code>, rules, or <code>.mcp.json</code> plugin directly into Antigravity</sub><br /><br />
-      <img src="./assets/github-plugin-installer.png" alt="One-Click Install from GitHub" width="72%" />
+      <strong>Install from GitHub (Customizations)</strong><br /><br />
+      <img src="./assets/github-plugin-installer.png" alt="Install from GitHub Modal" width="72%" />
     </td>
   </tr>
 </table>
 
 ---
 
-## Architecture
+## How it works
 
 ```mermaid
 flowchart LR
-    UI["Antigravity Electron UI<br/>(12-Lang RTL + Live Telemetry)"] -->|HTTPS + X.509 SAN| GW["Local Gateway Forwarder<br/>(Pure Node.js, Zero Deps)"]
-    LS["Patched language_server<br/>(2M Context + Mendel Unlocked)"] -->|gRPC / HTTP| GW
-    GW -->|"Bidirectional Translator<br/>(GenAI · OpenAI · Anthropic · Azure)"| Router["Per-(Account, Model) Quota Router<br/>& 300ms OAuth Keyring Vault"]
-    Router -->|"Direct or HTTP / SOCKS5<br/>TLS Tunnel"| Up["Upstream AI Providers & Google OAuth"]
-    Watch["Background Auto Re-Patch Watcher<br/>(Task Scheduler / LaunchAgent / systemd)"] -.->|"2s auto-restore on update"| LS
+    UI["Antigravity UI<br/>(Electron)"] -->|HTTPS + local SAN cert| GW["Local Gateway<br/>(Node.js)"]
+    LS["language_server<br/>(patched binary)"] -->|gRPC / HTTP| GW
+    GW -->|GenAI / OpenAI / Anthropic / Azure| Router["Quota Router &amp; OAuth Vault"]
+    Router -->|Direct or HTTP / SOCKS5| Up["Upstream APIs &amp; Google OAuth"]
+    Watch["Update Watcher<br/>(OS service)"] -.->|re-patches after update| LS
 ```
 
----
-
-## Supported Providers & Languages
+- On startup, a pure-Node X.509 v3 SAN cert (`~/.gemini/cert.pem`) is generated once so `language_server` trusts the local gateway without `sudo` or OpenSSL.
+- `gatewayForwarder.js` translates requests/streams between Google GenAI, OpenAI `/v1/chat/completions`, Anthropic `/v1/messages` (including thinking blocks), and Azure OpenAI.
+- For Google OAuth, each added account gets its own saved credential snapshot in `~/.gemini/oauth_profiles/` and swaps directly with the OS keyring instead of going through full sign-out/sign-in.
 
 <details>
-<summary><strong>26 Built-in Provider Presets & Protocols</strong></summary>
+<summary>26 included provider presets</summary>
 
-- **Google GenAI:** Google Gemini (AI Studio), Google Vertex AI
-- **OpenAI Compatible:** OpenAI, OpenRouter, DeepSeek, Groq, xAI (Grok), Together AI, Fireworks AI, Mistral AI, Perplexity, Cerebras, SambaNova, HuggingFace, NVIDIA NIM, SiliconFlow, Qwen (DashScope), Zhipu GLM, Moonshot (Kimi), Cohere
-- **Anthropic Messages (with Extended Thinking):** Anthropic Claude, AWS Bedrock / Custom Anthropic Endpoints
-- **Azure & Local Runtimes:** Azure OpenAI, Ollama, LM Studio, vLLM, Custom OpenAI/Anthropic/GenAI URL
+Google Gemini (AI Studio), Google Vertex AI, OpenAI, Anthropic Claude, OpenRouter, DeepSeek, Groq, xAI (Grok), Together AI, Fireworks AI, Mistral AI, Perplexity, Cerebras, SambaNova, HuggingFace, NVIDIA NIM, SiliconFlow, Qwen (DashScope), Zhipu GLM, Moonshot (Kimi), Cohere, Azure OpenAI, Ollama, LM Studio, vLLM, and Custom URLs.
 
 </details>
 
-<details id="12-language-ui--rtl-engine">
-<summary><strong>12 Supported UI Languages (Zero-Reload + RTL/Bidi)</strong></summary>
+<details>
+<summary>12 UI languages</summary>
 
-| Code | Language | Direction | Code | Language | Direction |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| `en` | English | LTR | `es` | Español | LTR |
-| `fa` | فارسی (Persian) | **RTL + Bidi** | `pt` | Português | LTR |
-| `ar` | العربية (Arabic) | **RTL + Bidi** | `ja` | 日本語 (Japanese) | LTR |
-| `zh` | 简体中文 (Chinese) | LTR | `ko` | 한국어 (Korean) | LTR |
-| `ru` | Русский (Russian) | LTR | `de` | Deutsch | LTR |
-| `tr` | Türkçe (Turkish) | LTR | `fr` | Français | LTR |
+`en` English · `fa` فارسی (RTL) · `ar` العربية (RTL) · `zh` 简体中文 · `ru` Русский · `tr` Türkçe · `es` Español · `pt` Português · `ja` 日本語 · `ko` 한국어 · `de` Deutsch · `fr` Français
 
 </details>
 
 ---
 
-## CLI Commands
+## CLI
 
 ```bash
-# Apply all JS + binary patches and register the update-proof watcher
-node cli.js patch
-
-# Inspect current installation, binary signature offsets, and watcher health
-node cli.js status
-
-# Restore original stock Antigravity from backups (preserves ~/.gemini configs)
-node cli.js unpatch
-
-# Target a non-default Antigravity installation directory
+node cli.js patch                  # patch app + register update watcher
+node cli.js status                 # show version, binary offsets, watcher state
+node cli.js unpatch                # restore stock files from .bak
 node cli.js patch --path "D:\Apps\Antigravity"
 
-# Manage the background watcher manually
 node cli.js install-watcher
 node cli.js uninstall-watcher
 ```
 
----
+## Local files (`~/.gemini/`)
 
-## User Configuration & Privacy
+Unpatching does **not** touch anything in `~/.gemini/`:
 
-All API keys, custom providers, OAuth keyring slots, and auto-generated localhost TLS certificates remain strictly on your local machine under `~/.gemini/`:
-
-| File / Directory | Purpose |
+| Path | What's in it |
 | :--- | :--- |
-| `~/.gemini/antigravity.json` | Providers, custom models, context limits, and multi-account API keys (JSONC supported) |
-| `~/.gemini/antigravity_auth_mode.json` | Active auth mode (`apikey` or `google_oauth`) and OAuth account slots |
-| `~/.gemini/oauth_profiles/` | Isolated per-account Google OAuth credential snapshots synced with OS keyring |
-| `~/.gemini/antigravity_plus_settings.json` | Built-in HTTP/SOCKS5 proxy settings and per-model quota rotation rules |
-| `~/.gemini/cert.pem` & `key.pem` | Auto-generated X.509 v3 SAN certificate for `localhost` / `127.0.0.1` (pure Node `crypto`) |
-| `~/.gemini/config/plugins/` | Installed Marketplace and GitHub-imported plugins, skills, and MCP servers |
+| `~/.gemini/antigravity.json` | Providers, models, context overrides, API keys (JSONC ok) |
+| `~/.gemini/antigravity_auth_mode.json` | Current mode (`apikey` / `google_oauth`) and OAuth slots |
+| `~/.gemini/oauth_profiles/` | Per-account OAuth snapshots |
+| `~/.gemini/antigravity_plus_settings.json` | Proxy URL and quota rotation rules |
+| `~/.gemini/cert.pem` & `key.pem` | Localhost TLS cert generated by Node `crypto` |
+| `~/.gemini/config/plugins/` | Plugins / skills installed from Marketplace or GitHub |
 
 ---
 
-## راهنمای فارسی (Persian Guide)
+## راهنمای فارسی
 
-- **نصب یک‌خطی (بدون نیاز به کلون دستی):**
-  در پاورشل ویندوز دستور زیر را اجرا کنید:
+آنتی‌گرویتی به صورت پیش‌فرض محدود به یک اکانت گوگل، سقف `256K` کانتکست و کلی فلگ قفل‌شده است و با هر آپدیت هم تمام تغییرات پاک می‌شود. این ابزار فایل‌های برنامه و باینری `language_server` را روی سیستم خودتان پچ می‌کند (بدون نیاز به هیچ پکیج `npm`) و تنظیمات شما در `~/.gemini/` دست‌نخورده می‌ماند.
+
+- **نصب سریع در ویندوز (PowerShell):**
   ```powershell
   irm https://raw.githubusercontent.com/DianaFoxington/antigravity-plus/main/install.ps1 | iex
   ```
-- **نصب و راه‌اندازی دستی:** فایل `install.ps1` در ویندوز یا `./install.sh` در مک و لینوکس تمام پچ‌های JS و باینری `language_server` را بدون نیاز به هیچ پکیج خارجی اعمال می‌کند.
-- **سوئیچ آنی ۳۰۰ میلی‌ثانیه‌ای بین اکانت‌ها:** در مسیر **تنظیمات ← کلید API و حساب کاربری** می‌توانید همزمان بین چندین اکانت گوگل (OAuth) و ۲۶ پروایدر API (مثل OpenAI، Anthropic، OpenRouter، DeepSeek، Ollama و...) بدون ری‌لود جابه‌جا شوید.
-- **پروکسی داخلی و چرخش خودکار سهمیه:** در تب **Proxy & Quota Rotation** می‌توانید پروکسی `HTTP/SOCKS5` را مستقیم درون برنامه ست کنید و چرخش خودکار اکانت به ازای هر مدل را فعال نگه دارید.
-- **بومی‌سازی ۱۲ زبانه با پشتیبانی کامل فارسی (RTL/Bidi):** از **تنظیمات ← ظاهر و زبان ← زبان رابط کاربری** زبان فارسی را انتخاب کنید تا کل منوها و چت با ایزولاسیون صحیح کلمات انگلیسی راست‌به‌چپ شوند.
-- **ضدِ آپدیت خودکار:** پس از هر آپدیت Antigravity، واچر پس‌زمینه ظرف ~۲ ثانیه نسخه جدید را شناسایی و بدون حذف تنظیمات `~/.gemini/` مجدداً پچ می‌کند.
-- **بازگشت به حالت کارخانه:** با `.\uninstall.ps1` یا `node cli.js unpatch` همه فایل‌های اصلی از بکاپ بازگردانی می‌شوند.
+- **تنظیمات اکانت و پروایدر:** در **تنظیمات ← کلید API و حساب کاربری** می‌توانید همزمان چند اکانت گوگل (OAuth) و ۲۶ پروایدر API (مثل OpenAI، Anthropic، OpenRouter، DeepSeek، Ollama و...) را اضافه کنید و بدون ری‌لود بینشان جابه‌جا شوید.
+- **پروکسی داخلی و چرخش خودکار سهمیه:** در تب **Proxy & Quota Rotation** می‌توانید پروکسی `HTTP/SOCKS5` را مستقیم داخل خود برنامه ست کنید؛ اگر سهمیه یک اکانت روی مدل خاصی تمام شود، فقط همان مدل خودکار به اکانت بعدی می‌رود.
+- **زبان فارسی و راست‌چین کامل:** از **تنظیمات ← ظاهر و زبان** زبان را روی فارسی بگذارید تا کل محیط بدون ری‌لود فارسی شود (کلمات انگلیسی هم وسط متن فارسی به‌هم نمی‌ریزند).
+- **آپدیت‌های بعدی:** یک واچر سبک در پس‌زمینه ثبت می‌شود که بعد از آپدیت برنامه ظرف چند ثانیه پچ‌ها را دوباره اعمال می‌کند.
+- **برگشت به حالت اصلی:** با `.\uninstall.ps1` یا `node cli.js unpatch` همه فایل‌ها از بکاپ برمی‌گردند.
 
 ---
 
-## License
-
-MIT License — see [LICENSE](./LICENSE).
+[MIT License](./LICENSE)
