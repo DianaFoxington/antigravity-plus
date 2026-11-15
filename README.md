@@ -1,8 +1,58 @@
+<div align="center">
+
 # Antigravity Plus
 
-Cross-platform **Multi-Provider AI Gateway**, **~300ms Google OAuth / API-Key Hot-Switcher**, **Native 1M+ Context Window Binary Patcher**, and **Hidden Feature & Plugin Marketplace Unlocker** for **Antigravity Desktop** (`Windows`, `macOS`, `Linux`).
+**Cross-platform Multi-Provider AI Gateway · ~300ms Google OAuth / API-Key Switcher · 1M+ Context Binary Patcher · Built-in HTTP/SOCKS5 Proxy · 12-Language RTL/Bidi Engine**
 
-Zero external npm dependencies. Zero proprietary binaries distributed. Automatically survives future app updates.
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-0f172a?style=for-the-badge)](./README.md#quick-start)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18.0-339933?style=for-the-badge&logo=node.js&logoColor=white)](./package.json)
+[![Dependencies](https://img.shields.io/badge/Dependencies-Zero-f97316?style=for-the-badge)](./package.json)
+[![Languages](https://img.shields.io/badge/UI%20Languages-12%20%2B%20RTL-6366f1?style=for-the-badge)](./README.md#screenshots)
+[![License: MIT](https://img.shields.io/badge/License-MIT-eab308?style=for-the-badge)](./LICENSE)
+
+[Key Features](#key-features) · [Screenshots](#screenshots) · [Quick Start](#quick-start) · [CLI Commands](#cli-commands) · [راهنمای فارسی](#راهنمای-فارسی-persian-guide)
+
+</div>
+
+> Zero external npm dependencies. Zero proprietary binaries distributed. Automatically survives future Antigravity Desktop updates.
+
+---
+
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <strong>Multi-Provider Gateway & Key Vault</strong><br />
+      <sub>26 built-in presets, multi-account API keys, & 300ms OAuth switching</sub><br /><br />
+      <img src="./assets/multi-provider-gateway.png" alt="Multi-Provider Gateway & API Keys" width="100%" />
+    </td>
+    <td align="center" width="50%">
+      <strong>Built-in HTTP/SOCKS5 Proxy & Per-Model Rotation</strong><br />
+      <sub>Pure Node TLS tunneling + automatic quota exhaustion failover per (Account, Model)</sub><br /><br />
+      <img src="./assets/proxy-quota-rotation.png" alt="Built-in HTTP/SOCKS5 Proxy and Quota Rotation" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <strong>12-Language Instant Switcher (Searchable Popover)</strong><br />
+      <sub>Switch all menus, settings, and dialogs live with zero app reload</sub><br /><br />
+      <img src="./assets/language-switcher.png" alt="12-Language Searchable Switcher" width="100%" />
+    </td>
+    <td align="center" width="50%">
+      <strong>Full RTL & Unicode Bidi Engine (Persian / Arabic)</strong><br />
+      <sub>Automatic RLI/LRI isolation keeps mixed technical terms & metrics clean</sub><br /><br />
+      <img src="./assets/rtl-localization-fa.png" alt="Full Persian RTL Localization" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">
+      <strong>One-Click Install from GitHub (Customizations)</strong><br />
+      <sub>Install any GitHub repo, <code>SKILL.md</code>, rules, or <code>.mcp.json</code> plugin directly into Antigravity</sub><br /><br />
+      <img src="./assets/github-plugin-installer.png" alt="One-Click Install from GitHub" width="72%" />
+    </td>
+  </tr>
+</table>
 
 ---
 
