@@ -22,7 +22,7 @@ Stock Antigravity ties you to one Google login, caps context checkpoints at `256
 
 ## Install
 
-Requires **Node.js 18+** and **Antigravity Desktop** installed.
+Runs on **Windows**, **macOS**, and **Linux**. On Windows, the one-line installer automatically installs **Node.js** and **Antigravity Desktop** if either is missing, then applies the patch.
 
 **Windows (PowerShell):**
 ```powershell
