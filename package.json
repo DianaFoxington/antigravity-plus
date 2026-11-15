@@ -1,0 +1,31 @@
+{
+  "name": "antigravity-plus",
+  "version": "1.0.0",
+  "description": "Cross-platform Multi-Provider Gateway, Instant OAuth/API-Key Switcher, 1M+ Context Patcher & Hidden Feature Unlocker for Antigravity Desktop",
+  "main": "cli.js",
+  "bin": {
+    "antigravity-plus": "./cli.js",
+    "agy-plus": "./cli.js"
+  },
+  "scripts": {
+    "start": "node cli.js patch",
+    "patch": "node cli.js patch",
+    "unpatch": "node cli.js unpatch",
+    "status": "node cli.js status",
+    "watch": "node cli.js watch"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "antigravity",
+    "gemini",
+    "openai",
+    "anthropic",
+    "gateway",
+    "oauth",
+    "unlocker",
+    "patcher"
+  ],
+  "license": "MIT"
+}

@@ -1,0 +1,29 @@
+# Local agent instructions & workspace notes
+AGENTS.md
+.opencode/
+
+# User secrets, certificates, and local Antigravity configs (NEVER commit)
+.gemini/
+*.pem
+*.key
+*.crt
+*.pfx
+antigravity.json
+antigravity_*.json
+admin_settings.json
+
+# Proprietary binaries & backups (patched dynamically on user machine)
+*.asar
+*.asar.bak
+*.bak
+*.exe
+*.dll
+*.dylib
+*.so
+language_server*
+
+# Node & OS artifacts
+node_modules/
+npm-debug.log*
+.DS_Store
+Thumbs.db
