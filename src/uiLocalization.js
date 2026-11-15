@@ -9,7 +9,9 @@
 
 const fs = require("fs");
 const path = require("path");
+const zlib = require("zlib");
 
+const LOCALES_BR_PATH = path.join(__dirname, "locales.json.br");
 const LOCALES_FILE_PATH = path.join(__dirname, "locales.json");
 
 const SUPPORTED_LANGUAGES = [
@@ -32,6 +34,11 @@ let _cachedLocalesMap = null;
 function loadAllLocalesMap() {
     if (_cachedLocalesMap) return _cachedLocalesMap;
     try {
+        if (fs.existsSync(LOCALES_BR_PATH)) {
+            const raw = zlib.brotliDecompressSync(fs.readFileSync(LOCALES_BR_PATH)).toString("utf8");
+            _cachedLocalesMap = JSON.parse(raw);
+            return _cachedLocalesMap;
+        }
         _cachedLocalesMap = JSON.parse(fs.readFileSync(LOCALES_FILE_PATH, "utf8"));
     } catch {
         _cachedLocalesMap = {};

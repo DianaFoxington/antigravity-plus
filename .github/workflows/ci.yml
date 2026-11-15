@@ -38,10 +38,10 @@ jobs:
       - name: Validate JSON & 12-language locale pack
         run: |
           node -e "
-            const fs = require('fs');
+            const fs = require('fs'), zlib = require('zlib');
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
             if (pkg.name !== 'antigravity-plus') throw new Error('Invalid package name');
-            const locales = JSON.parse(fs.readFileSync('src/locales.json', 'utf8'));
+            const locales = JSON.parse(zlib.brotliDecompressSync(fs.readFileSync('src/locales.json.br')).toString('utf8'));
             const expected = ['fa','zh','ru','ar','tr','es','pt','ja','ko','de','fr'];
             for (const c of expected) {
               if (!locales[c] || Object.keys(locales[c].dict || {}).length < 500) {

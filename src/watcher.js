@@ -55,7 +55,7 @@ function syncRuntimeToPersistentHome(repoRootDir) {
     const srcFolder = path.join(repoRootDir, "src");
     if (fs.existsSync(srcFolder)) {
         for (const f of fs.readdirSync(srcFolder)) {
-            if (!f.endsWith(".js") && !f.endsWith(".json")) continue;
+            if (!f.endsWith(".js") && !f.endsWith(".json") && !f.endsWith(".br")) continue;
             const src = path.join(srcFolder, f);
             const dst = path.join(runtimeSrcDir, f);
             if (path.resolve(src) !== path.resolve(dst)) {

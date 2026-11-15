@@ -10,6 +10,7 @@ const path = require("path");
 const GATEWAY_SOURCE_FILE = path.join(__dirname, "gatewayForwarder.js");
 const NETWORK_SOURCE_FILE = path.join(__dirname, "networkAndPlugins.js");
 const LOCALIZATION_SOURCE_FILE = path.join(__dirname, "uiLocalization.js");
+const LOCALES_BR_FILE = path.join(__dirname, "locales.json.br");
 const LOCALES_JSON_FILE = path.join(__dirname, "locales.json");
 
 function patchMenuJs(distDir) {
@@ -447,11 +448,13 @@ function applyAllJsPatches(appDir, options = {}) {
         throw new Error(`Electron dist directory not found: ${distDir}`);
     }
 
-    // Always install latest sanitized gatewayForwarder.js, networkAndPlugins.js, uiLocalization.js & locales.json
+    // Always install latest sanitized gatewayForwarder.js, networkAndPlugins.js, uiLocalization.js & locales.json.br
     fs.copyFileSync(GATEWAY_SOURCE_FILE, path.join(distDir, "gatewayForwarder.js"));
     fs.copyFileSync(NETWORK_SOURCE_FILE, path.join(distDir, "networkAndPlugins.js"));
     fs.copyFileSync(LOCALIZATION_SOURCE_FILE, path.join(distDir, "uiLocalization.js"));
-    if (fs.existsSync(LOCALES_JSON_FILE)) {
+    if (fs.existsSync(LOCALES_BR_FILE)) {
+        fs.copyFileSync(LOCALES_BR_FILE, path.join(distDir, "locales.json.br"));
+    } else if (fs.existsSync(LOCALES_JSON_FILE)) {
         fs.copyFileSync(LOCALES_JSON_FILE, path.join(distDir, "locales.json"));
     }
 
@@ -459,7 +462,7 @@ function applyAllJsPatches(appDir, options = {}) {
         { file: "dist/gatewayForwarder.js", status: "installed" },
         { file: "dist/networkAndPlugins.js", status: "installed" },
         { file: "dist/uiLocalization.js", status: "installed" },
-        { file: "dist/locales.json", status: "installed" },
+        { file: fs.existsSync(LOCALES_BR_FILE) ? "dist/locales.json.br" : "dist/locales.json", status: "installed" },
         patchDebugConsoleJs(distDir),
         patchMainJs(distDir, options),
         patchMenuJs(distDir),
