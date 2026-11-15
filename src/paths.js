@@ -46,6 +46,64 @@ function normalizeResourcesCandidate(inputPath) {
     return null;
 }
 
+function discoverWindowsDynamicCandidates(home, localAppData) {
+    const found = [];
+    const pushIf = p => { if (p && typeof p === "string") found.push(p.trim().replace(/^"|"$/g, "")); };
+
+    // 1. Standard directories + wildcard scan in Programs / Users
+    const progFiles = process.env.PROGRAMFILES || "C:\\Program Files";
+    const progFilesX86 = process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)";
+    pushIf(path.join(localAppData, "Programs", "antigravity", "resources"));
+    pushIf(path.join(localAppData, "Programs", "Antigravity", "resources"));
+    pushIf(path.join(localAppData, "antigravity", "resources"));
+    pushIf(path.join(localAppData, "Antigravity", "resources"));
+    pushIf(path.join(progFiles, "Antigravity", "resources"));
+    pushIf(path.join(progFilesX86, "Antigravity", "resources"));
+
+    // Check C:\Users\*\AppData\Local\Programs\antigravity (handles elevated/admin2 accounts)
+    try {
+        const usersRoot = path.dirname(home);
+        if (fs.existsSync(usersRoot)) {
+            for (const u of fs.readdirSync(usersRoot)) {
+                pushIf(path.join(usersRoot, u, "AppData", "Local", "Programs", "antigravity", "resources"));
+                pushIf(path.join(usersRoot, u, "AppData", "Local", "Programs", "Antigravity", "resources"));
+            }
+        }
+    } catch {}
+
+    // Check common drive roots (portable / custom drive installs)
+    for (const drv of ["C:\\", "D:\\", "E:\\", "F:\\"]) {
+        pushIf(path.join(drv, "Antigravity", "resources"));
+        pushIf(path.join(drv, "antigravity", "resources"));
+        pushIf(path.join(drv, "Programs", "Antigravity", "resources"));
+        pushIf(path.join(drv, "Programs", "antigravity", "resources"));
+        pushIf(path.join(drv, "Apps", "Antigravity", "resources"));
+    }
+
+    // 2. Running process, Registry Uninstall keys, and Start Menu / Desktop shortcuts
+    try {
+        const psScript = [
+            "$ErrorActionPreference='SilentlyContinue'",
+            "Get-Process -Name '*Antigravity*' | ForEach-Object { if ($_.Path) { $_.Path } }",
+            "$regRoots = @('HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*')",
+            "Get-ItemProperty $regRoots | Where-Object { $_.DisplayName -match 'Antigravity' -or $_.UninstallString -match 'Antigravity' } | ForEach-Object { $_.InstallLocation; ($_.DisplayIcon -split ',')[0]; ($_.UninstallString -replace '\"','' -split ' /')[0] }",
+            "$ws = New-Object -ComObject WScript.Shell",
+            "$lnkDirs = @((Join-Path $env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs'), (Join-Path $env:USERPROFILE 'Desktop'), (Join-Path $env:PUBLIC 'Desktop'))",
+            "foreach ($d in $lnkDirs) { if (Test-Path $d) { Get-ChildItem -LiteralPath $d -Filter '*Antigravity*.lnk' -Recurse | ForEach-Object { $ws.CreateShortcut($_.FullName).TargetPath } } }"
+        ].join("; ");
+        const out = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", psScript], {
+            encoding: "utf8",
+            timeout: 5000,
+            stdio: ["ignore", "pipe", "ignore"]
+        });
+        for (const line of String(out || "").split(/\r?\n/)) {
+            pushIf(line);
+        }
+    } catch {}
+
+    return found;
+}
+
 function discoverAntigravityResources(customPath = null) {
     if (customPath) {
         const resolved = normalizeResourcesCandidate(customPath);
@@ -74,14 +132,7 @@ function discoverAntigravityResources(customPath = null) {
 
     if (process.platform === "win32") {
         const localAppData = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
-        const progFiles = process.env.PROGRAMFILES || "C:\\Program Files";
-        const progFilesX86 = process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)";
-        candidates.push(
-            path.join(localAppData, "Programs", "antigravity", "resources"),
-            path.join(localAppData, "Programs", "Antigravity", "resources"),
-            path.join(progFiles, "Antigravity", "resources"),
-            path.join(progFilesX86, "Antigravity", "resources")
-        );
+        candidates.push(...discoverWindowsDynamicCandidates(home, localAppData));
     } else if (process.platform === "darwin") {
         candidates.push(
             "/Applications/Antigravity.app/Contents/Resources",
@@ -110,7 +161,7 @@ function discoverAntigravityResources(customPath = null) {
     }
 
     throw new Error(
-        "Could not auto-detect Antigravity installation. Pass --path <Antigravity-Folder> explicitly."
+        "Could not auto-detect Antigravity installation. Pass --path <Antigravity-Folder> or set ANTIGRAVITY_PATH."
     );
 }
 
