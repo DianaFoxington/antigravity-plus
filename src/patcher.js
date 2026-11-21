@@ -11,7 +11,7 @@ const {
 } = require("./paths");
 const { extractAsarArchive, removeDirRecursive } = require("./asar");
 const { applyAllJsPatches } = require("./jsPatcher");
-const { inspectLanguageServerBinary, patchLanguageServerBinary } = require("./binaryPatcher");
+const { inspectLanguageServerBinary, patchLanguageServerBinary, safeReplaceFileSync, sleepSync } = require("./binaryPatcher");
 
 function savePatchState(layout, extra = {}) {
     fs.mkdirSync(layout.persistentHomeDir, { recursive: true });
@@ -78,6 +78,7 @@ function patchAntigravity(options = {}) {
 
     if (wasRunning) {
         stopRunningAntigravity();
+        if (process.platform === "win32") sleepSync(400);
     }
 
     let extractedFreshAsar = false;
@@ -89,7 +90,7 @@ function patchAntigravity(options = {}) {
         if (fs.existsSync(layout.asarBakPath)) {
             fs.unlinkSync(layout.asarBakPath);
         }
-        fs.renameSync(layout.asarPath, layout.asarBakPath);
+        safeReplaceFileSync(layout.asarPath, layout.asarBakPath);
         extractedFreshAsar = true;
     } else if (!fs.existsSync(path.join(layout.appDir, "package.json"))) {
         // Case B: `resources/app` missing, recover from `app.asar.bak`
@@ -132,6 +133,7 @@ function unpatchAntigravity(options = {}) {
 
     if (wasRunning) {
         stopRunningAntigravity();
+        if (process.platform === "win32") sleepSync(400);
     }
 
     let restoredAsar = false;
@@ -139,7 +141,7 @@ function unpatchAntigravity(options = {}) {
         if (fs.existsSync(layout.asarPath)) {
             fs.unlinkSync(layout.asarPath);
         }
-        fs.renameSync(layout.asarBakPath, layout.asarPath);
+        safeReplaceFileSync(layout.asarBakPath, layout.asarPath);
         restoredAsar = true;
     }
 
@@ -152,7 +154,7 @@ function unpatchAntigravity(options = {}) {
         if (fs.existsSync(layout.lsBinaryPath)) {
             fs.unlinkSync(layout.lsBinaryPath);
         }
-        fs.renameSync(layout.lsBakPath, layout.lsBinaryPath);
+        safeReplaceFileSync(layout.lsBakPath, layout.lsBinaryPath);
         restoredBinary = true;
     }
 

@@ -64,7 +64,7 @@ function getLocalePackByCode(langCode) {
     };
 }
 
-function _agyInitMultiLanguageRuntime(gwBase, langsCatalog, A, ReactDOMPortal, YP, WP, XP) {
+function _agyInitMultiLanguageRuntime(gwBase, langsCatalog, getSyms) {
     var STORAGE_LANG_KEY = "agy.ui.language";
     var STORAGE_PACK_PREFIX = "agy.ui.pack.v3.";
 
@@ -415,6 +415,8 @@ function _agyInitMultiLanguageRuntime(gwBase, langsCatalog, A, ReactDOMPortal, Y
     }
 
     function AppearanceLanguageCard() {
+        var _s = getSyms();
+        var A = _s.A, ReactDOMPortal = _s.Portal, YP = _s.YP, WP = _s.WP, XP = _s.XP;
         var st = A.useState(_agyUiLang);
         var lang = st[0], setLang = st[1];
         var stMeta = A.useState(_agyActivePack.meta || {});
@@ -602,9 +604,14 @@ function _agyInitMultiLanguageRuntime(gwBase, langsCatalog, A, ReactDOMPortal, Y
     return AppearanceLanguageCard;
 }
 
-function buildAppearanceLanguageAndI18nCode(gwBase) {
+function buildAppearanceLanguageAndI18nCode(gwBase, syms = {}) {
     const langsJson = JSON.stringify(SUPPORTED_LANGUAGES);
-    return `\nvar _AgyAppearanceLanguageCard = (${_agyInitMultiLanguageRuntime.toString()})(${JSON.stringify(gwBase)}, ${langsJson}, A, typeof uy!=="undefined"?uy:null, YP, WP, XP);\n`;
+    const R = syms.reactSym || "A";
+    const P = syms.portalSym || "uy";
+    const YP = syms.sectionCardSym || "YP";
+    const WP = syms.cardContainerSym || "WP";
+    const XP = syms.cardRowSym || "XP";
+    return `\nvar _AgyAppearanceLanguageCard = (${_agyInitMultiLanguageRuntime.toString()})(${JSON.stringify(gwBase)}, ${langsJson}, function(){ return { A: ${R}, Portal: typeof ${P}!=="undefined"?${P}:null, YP: ${YP}, WP: ${WP}, XP: ${XP} }; });\n`;
 }
 
 module.exports = {

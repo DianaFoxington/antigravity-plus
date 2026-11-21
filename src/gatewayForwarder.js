@@ -3501,8 +3501,17 @@ async function handlePluginManagerRequest(urlPath, req, res, rawBodyBuf) {
 // ---------------------------------------------------------------------------
 // Native React Screen: 'Settings -> API Key & Account' (Visual + JSONC Editor)
 // ---------------------------------------------------------------------------
-function buildProvidersJsonScreenCode(gwBase) {
-    return `var _agyModelCtxMap={};
+function buildProvidersJsonScreenCode(gwBase, syms = {}) {
+    const R = syms.reactSym || "A";
+    const UP = syms.pageHeaderSym || "UP";
+    const YP = syms.sectionCardSym || "YP";
+    const WP = syms.cardContainerSym || "WP";
+    const XP = syms.cardRowSym || "XP";
+    const BTN = syms.btnSym || "aB";
+    const ICON = syms.iconSym || "lt";
+    const bindLocalSyms = `var {A,UP,YP,WP,XP,aB,lt}=_agyGetUiSyms();`;
+    return `function _agyGetUiSyms(){return{A:${R},UP:${UP},YP:${YP},WP:${WP},XP:${XP},aB:${BTN},lt:${ICON}}}
+var _agyModelCtxMap={};
 var _agyTelemetryState={isStreaming:!1,totalRequests:0,totalPromptTokens:0,totalCompletionTokens:0,totalCostUsd:0,lastTokPerSec:0,avgTokPerSec:0,lastTtftMs:0,lastModel:""};
 var _agyTelListeners=new Set();
 var _agyActiveModelHint="";
@@ -3569,6 +3578,7 @@ function _makeEmptyModelDraft(){
   };
 }
 function _AgyModelFormFields({draft,setDraft,onSubmit,onCancel,submitLabel,busy,inputCls}){
+  ${bindLocalSyms}
   var toggleMod=mod=>{
     setDraft(d=>{
       var cur=Array.isArray(d.inputModalities)?d.inputModalities:["text"];
@@ -3653,6 +3663,7 @@ function _AgyModelFormFields({draft,setDraft,onSubmit,onCancel,submitLabel,busy,
   );
 }
 function _AgyApiKeysScreen(){
+  ${bindLocalSyms}
   var [viewPage,setViewPage]=(0,A.useState)("apikey"),
       initViewRef=(0,A.useRef)(!1),
       [tab,setTab]=(0,A.useState)("visual"),
@@ -4740,15 +4751,380 @@ function _AgyApiKeysScreen(){
         )
       )
   );
-};`;
+};
+function _AgyLiveTelemetryRing({modelConfig:_mc}){
+  ${bindLocalSyms}
+  if(_mc?.label||_mc?.modelId)_agyActiveModelHint=String(_mc.label||_mc.modelId);
+  var [tel,setTel]=(0,A.useState)(()=>({..._agyTelemetryState}));
+  var [open,setOpen]=(0,A.useState)(!1);
+  var btnRef=(0,A.useRef)(null);
+  (0,A.useEffect)(()=>{
+    var onTel=s=>setTel(s);
+    _agyTelListeners.add(onTel);
+    fetch("${gwBase}/__agy_quota").then(r=>r.json()).then(j=>{
+      if(j&&j.modelContextLimits)Object.assign(_agyModelCtxMap,j.modelContextLimits);
+      if(j&&j.telemetry)_agyEmitTel(j.telemetry);
+    }).catch(()=>{});
+    return()=>{_agyTelListeners.delete(onTel)};
+  },[]);
+  (0,A.useEffect)(()=>{
+    if(!open)return;
+    var onDoc=ev=>{if(btnRef.current&&btnRef.current.contains(ev.target))return;setOpen(!1)};
+    document.addEventListener("mousedown",onDoc,true);
+    return()=>document.removeEventListener("mousedown",onDoc,true);
+  },[open]);
+  var fmtTok=n=>{n=Number(n)||0;return n>=1e6?(n/1e6).toFixed(1)+"M":n>=1e3?(n/1e3).toFixed(1)+"K":String(n)};
+  var mId=String(_mc?.modelId||"").toLowerCase(),mLbl=String(_mc?.label||"").toLowerCase();
+  var maxCtx=_agyModelCtxMap[mId]||_agyModelCtxMap[mLbl]||1048576;
+  var totalSess=(tel?.totalPromptTokens||0)+(tel?.totalCompletionTokens||0);
+  var pct=maxCtx>0?Math.min(100,Math.round((totalSess/maxCtx)*100)):0;
+  return A.createElement("div",{ref:btnRef,className:"relative inline-flex items-center"},
+    A.createElement("button",{
+      type:"button",
+      "data-testid":"agy-live-telemetry-ring",
+      onClick:()=>{setOpen(o=>!o);fetch("${gwBase}/__agy_quota").then(r=>r.json()).then(j=>{if(j&&j.telemetry)_agyEmitTel(j.telemetry)}).catch(()=>{})},
+      className:"inline-flex items-center gap-1.5 h-7 px-2 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/60 bg-transparent border-none cursor-pointer transition-colors"
+    },
+      A.createElement("span",{className:"inline-block w-2 h-2 rounded-full "+(tel?.isStreaming?"bg-emerald-400 animate-pulse":"bg-primary/70")}),
+      A.createElement("span",{className:"font-mono text-[11px]"},pct+"%"),
+      (tel&&(tel.lastTokPerSec>0||tel.isStreaming))&&A.createElement("span",{className:"font-mono text-[11px] "+(tel.isStreaming?"text-emerald-400":"text-muted-foreground")},Number(tel.lastTokPerSec||0).toFixed(1)+" tok/s")
+    ),
+    open&&A.createElement("div",{
+      className:"absolute bottom-9 right-0 w-60 rounded-xl border border-border bg-background shadow-2xl p-3 flex flex-col gap-2 z-50 text-xs"
+    },
+      A.createElement("div",{className:"flex items-center justify-between border-b border-border pb-1.5"},
+        A.createElement("span",{className:"font-semibold text-foreground"},"Live Telemetry & Context"),
+        A.createElement("span",{className:"font-mono text-[11px] text-muted-foreground"},fmtTok(maxCtx)+" max")
+      ),
+      A.createElement("div",{className:"grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]"},
+        A.createElement("div",{className:"flex justify-between"},A.createElement("span",{className:"text-muted-foreground"},"Speed"),A.createElement("span",{className:"font-mono font-medium text-foreground"},Number(tel?.lastTokPerSec||0).toFixed(1)+" tok/s")),
+        A.createElement("div",{className:"flex justify-between"},A.createElement("span",{className:"text-muted-foreground"},"TTFT"),A.createElement("span",{className:"font-mono font-medium text-foreground"},(tel?.lastTtftMs||0)+" ms")),
+        A.createElement("div",{className:"flex justify-between"},A.createElement("span",{className:"text-muted-foreground"},"Session"),A.createElement("span",{className:"font-mono font-medium text-foreground"},fmtTok(totalSess))),
+        A.createElement("div",{className:"flex justify-between"},A.createElement("span",{className:"text-muted-foreground"},"Cost"),A.createElement("span",{className:"font-mono font-medium text-foreground"},"$"+Number(tel?.totalCostUsd||0).toFixed(4)))
+      )
+    )
+  );
+}`;
+}
+
+function detectUiBundleSymbols(txt) {
+    const mR = /([A-Za-z0-9_$]+)\.createElement\("nav",\{"aria-label":"Customizations views"/.exec(txt)
+        || /([A-Za-z0-9_$]+)\.createElement\([A-Za-z0-9_$]+,\{title:"Appearance",description:"Configure the agent/.exec(txt);
+    const mP = /([A-Za-z0-9_$]+)\.createPortal\(/.exec(txt);
+    const mUP = /\.createElement\(([A-Za-z0-9_$]+),\{title:"Appearance",description:"Configure the agent/.exec(txt);
+    const mYP = /title:"Account",description:"Manage your plan[\s\S]{0,200}\.createElement\(([A-Za-z0-9_$]+),\{title:"General"\}/.exec(txt);
+    const mWP = /var ([A-Za-z0-9_$]+)=\(\{children:[a-z]\}\)=>[A-Za-z0-9_$]+\.createElement\("div",\{className:"agy-card bg-transparent rounded-xl border border-border overflow-hidden divide-y divide-border"\}/.exec(txt);
+    const mXP = /var ([A-Za-z0-9_$]+)=\(\{label:[a-z],description:[a-z],rightElement:[a-z],extraContent:[a-z]/.exec(txt);
+    const mBtnIcon = /\.createElement\(([A-Za-z0-9_$]+),\{variant:"ghost",size:"icon"[^}]*\},[A-Za-z0-9_$]+\.createElement\(([A-Za-z0-9_$]+),\{name:"close"/.exec(txt);
+    const mSetMendel = /setMendelFlagOverrides\(([A-Za-z0-9_$]+)\(([A-Za-z0-9_$]+),\{overrides:/.exec(txt);
+    return {
+        reactSym: (mR && mR[1]) || "A",
+        portalSym: (mP && mP[1]) || "uy",
+        pageHeaderSym: (mUP && mUP[1]) || "UP",
+        sectionCardSym: (mYP && mYP[1]) || "YP",
+        cardContainerSym: (mWP && mWP[1]) || "WP",
+        cardRowSym: (mXP && mXP[1]) || "XP",
+        btnSym: (mBtnIcon && mBtnIcon[1]) || "aB",
+        iconSym: (mBtnIcon && mBtnIcon[2]) || "lt",
+        pbFn: (mSetMendel && mSetMendel[1]) || "$b",
+        setMendelSchema: (mSetMendel && mSetMendel[2]) || "Yga"
+    };
+}
+
+function patchUiMainBundleSource(rawTxt, gwBase) {
+    const syms = detectUiBundleSymbols(rawTxt);
+    const R = syms.reactSym;
+    const BTN = syms.btnSym;
+    const ICON = syms.iconSym;
+    const defaultFlagsJson = JSON.stringify(DEFAULT_UNLOCKED_FLAGS);
+    const providersScreenComponent = buildProvidersJsonScreenCode(gwBase, syms);
+    const i18nEngineCode = buildAppearanceLanguageAndI18nCode(gwBase, syms);
+    let txt = rawTxt;
+
+    // 0a. Remove 'Check for Updates' from top-left Antigravity dropdown menu
+    txt = txt.replace(
+        /([A-Za-z0-9_$]+)\?\.checkForUpdates&&([A-Za-z0-9_$]+)\.push\(\{label:"Check for Updates",onClick:\(\)=>\{\1\.checkForUpdates\?\.\(\)\}\}\);/,
+        ""
+    );
+
+    // 0. Enable DevMode + Unlock All Hidden Mendel Flags & UserCohort-Gated Features
+    txt = txt
+        .replace(
+            /function ([A-Za-z0-9_$]+)\(\)\{return typeof window==="undefined"\?!1:!!window\.__APP_CONFIG__\?\.devMode\}/,
+            "function $1(){return!0}"
+        )
+        .replace(
+            /async function ([A-Za-z0-9_$]+)\(a\)\{var b=e,c=e;try\{try\{let d=c\(await b\(a\.getMendelFlags\(([A-Za-z0-9_$]+)\(([A-Za-z0-9_$]+),\{\}\)\)\)\)\.experimentConfig\?\.experiments\?\?\[\];a=\{\};for\(let f of d\)f\.keyString&&\(a\[f\.keyString\]=f\);return a\}/,
+            (_m, fnName, pbFn, getSchema) =>
+                `async function ${fnName}(a){var _lsRef=a,b=e,c=e;try{try{let d=c(await b(a.getMendelFlags(${pbFn}(${getSchema},{})))).experimentConfig?.experiments??[];a={};for(let _fl of ${defaultFlagsJson})a[_fl]={keyString:_fl,disabled:!1};for(let f of d)f.keyString&&(a[f.keyString]=f);try{let _ov={};for(let _fl of ${defaultFlagsJson})_ov[_fl]=!0;let _raw=typeof window!=="undefined"?window.localStorage.getItem("jetski.developer.customFlagOverrides"):null;if(_raw){let _parsed=JSON.parse(_raw);if(_parsed&&typeof _parsed==="object")Object.assign(_ov,_parsed)}${process.platform === "win32" ? '_ov["enable-programmatic-tools"]=!1;' : ""}_lsRef.setMendelFlagOverrides(${syms.pbFn}(${syms.setMendelSchema},{overrides:_ov})).catch(()=>{})}catch{}return a}`
+        )
+        .replaceAll('userCohort:["google"],customFlag:"labs-inline-actions"', 'customFlag:"labs-inline-actions"')
+        .replaceAll('userCohort:["google"],customFlag:"labs-autonomous-mode"', 'customFlag:"labs-autonomous-mode"')
+        .replace(/userCohort:\["google"\],\s*customFlag:"enable-conversation-sharing-prototype"/g, 'customFlag:"enable-conversation-sharing-prototype"')
+        .replaceAll('customFlag:"context-window-selector",userCohort:["google"]', 'customFlag:"context-window-selector"')
+        .replaceAll('customFlag:"enable-file-viewer-keyboard-navigation",userCohort:["google"]', 'customFlag:"enable-file-viewer-keyboard-navigation"')
+        .replaceAll('customFlag:"enable-plugin-themes",userCohort:["google"]', 'customFlag:"enable-plugin-themes"')
+        .replace(
+            /([A-Za-z0-9_$]+)=\{feature:\{visible:!1\},applyFirst:\[\{runtimeGating:\{userCohort:\["google"\]\},feature:\{visible:!0\}\}\],important:\[([A-Za-z0-9_$]+)\]\}/,
+            "$1={feature:{visible:!0},important:[$2]}"
+        )
+        .replace(
+            'labs:{feature:!1,applyFirst:[{runtimeGating:{userCohort:["google"]},feature:!0}]}',
+            'labs:{feature:!0}'
+        )
+        .replace(
+            /openArtifactInNewWindow:\{feature:!1,applyFirst:\[\{runtimeGating:\{host:\[[A-Za-z0-9_$.]+\],userCohort:\["google"\]\},feature:!0\}\]\}/,
+            'openArtifactInNewWindow:{feature:!0}'
+        )
+        .replace(
+            'enableCompactionNotification:{feature:a.enableCompactionNotification??!1}',
+            'enableCompactionNotification:{feature:!0}'
+        )
+        .replace(
+            'enableRawErrorDetails:{feature:!1}',
+            'enableRawErrorDetails:{feature:!0}'
+        )
+        .replace(
+            /enableDefaultCustomizationsSetting:\{feature:a\.enableDefaultCustomizationsSetting\?\?\s*!1\},enableBuildWithGooglePlugins:\{feature:a\.enableBuildWithGooglePlugins\?\?\s*!1\}/,
+            'enableDefaultCustomizationsSetting:{feature:!0},enableBuildWithGooglePlugins:{feature:!0}'
+        );
+
+    // 0b. Inject Native 'API Key & Account' Screen into Settings Sidebar (works for both v2.29 semicolon & v2.32 space-split)
+    txt = txt
+        .replace(
+            '{screen:"Models"},{screen:"Customizations"}',
+            '{screen:"Models"},{screen:"API Key & Account"},{screen:"Customizations"}'
+        )
+        .replace(
+            /([A-Za-z0-9_$]+)="General;Appearance;[^"]*Models;Customizations[^"]*"/,
+            (m) => m.replace("Models;Customizations", "Models;API Key & Account;Customizations")
+        )
+        .replace(
+            /([A-Za-z0-9_$]+)="General Appearance [^"]*Models Customizations[^"]*"\.split\(" "\)/,
+            (_m, varName) => `${varName}=[...${_m.slice(varName.length + 1)},"API Key & Account"]`
+        )
+        .replace(
+            /\.filter\(([a-z])=>a\.settings\.isScreenVisible\(\1\)\)/,
+            '.filter($1=>$1==="API Key & Account"||a.settings.isScreenVisible($1))'
+        )
+        .replace(
+            'h&&(m=m.filter(p=>p==="Regroup Google3 Chats"||p==="Shortcuts"||p==="Running"||g.has(p)))',
+            'h&&(m=m.filter(p=>p==="API Key & Account"||p==="Developer"||p==="Notifications"||p==="Regroup Google3 Chats"||p==="Shortcuts"||p==="Running"||g.has(p)))'
+        )
+        .replace(
+            /([a-z])&&\(([a-z])=\2\.filter\(([a-z])=>([A-Za-z0-9_$]+)\.includes\(\3\)\|\|\3==="Browser"\|\|\3==="Shortcuts"\|\|\3==="Running"\|\|([a-z])\.has\(\3\)\)\)/,
+            '$1&&($2=$2.filter($3=>$3==="API Key & Account"||$3==="Developer"||$3==="Notifications"||$4.includes($3)||$3==="Browser"||$3==="Shortcuts"||$3==="Running"||$5.has($3)))'
+        )
+        .replace(
+            /(function [A-Za-z0-9_$]+\(a\)\{(?:if\([A-Za-z0-9_$]+\.includes\(a\)\)return [A-Za-z0-9_$]+\.createElement\([A-Za-z0-9_$]+,\{screen:a\}\);)?switch\(a\)\{(?=case "(?:Account|General)":))/,
+            (match) => `${providersScreenComponent}\n${i18nEngineCode}\n${match}case "API Key & Account":return ${R}.createElement(_AgyApiKeysScreen,null);`
+        )
+        .replace(
+            /(\.createElement\([A-Za-z0-9_$]+,\{title:"Appearance",description:"Configure the agent's visual theme and display preferences\."\},)/,
+            `$1${R}.createElement(_AgyAppearanceLanguageCard,null),`
+        )
+        .replace(
+            /([A-Za-z0-9_$]+\.createElement\("div",\{style:\{display:([a-z])==="Models"\?"block":"none"\}\},[A-Za-z0-9_$]+\.createElement\([A-Za-z0-9_$]+,\{isActive:\2==="Models"\}\)\),)/,
+            `$1${R}.createElement("div",{style:{display:$2==="API Key & Account"?"block":"none"}},${R}.createElement(_AgyApiKeysScreen,null)),`
+        );
+
+    // 1. Account Branding + Dynamic Quota Sync (populates _agyModelCtxMap too!)
+    txt = txt
+        .replace(
+            /([a-z])=([a-z])\?\.name\?\.trim\(\),([a-z])=\2\?\.email\?\.trim\(\)/,
+            `$1=$2?.name?.trim()||"Google Gemini",$3=(($2?.email&&$2.email!=="gemini@google.com"&&fetch("${gwBase}/__agy_auth/record_email",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:$2.email,name:$2.name||""})}).catch(()=>{})),$2?.email?.trim()||"gemini@google.com")`
+        )
+        .replace(
+            /var ([A-Za-z])=d\?"Enterprise Gateway":c&&c\.userTier\?\.description/,
+            'var $1=d?"Max":c&&c.userTier?.description||"Max"'
+        )
+        .replace(
+            'description:d?"Authenticated via Enterprise Gateway":',
+            'description:d?"Google Gemini Max Plan":'
+        )
+        .replace(
+            'description:"Managed by Enterprise Gateway"',
+            'description:"gemini@google.com"'
+        )
+        .replace(
+            /([a-z])=([a-z])\?\.context\.isGcpTos\?\?!1;\2=\2\?\.state\?\?"signedOut";var ([a-z])=([a-z])&&\4\.userTier\?\.description,([a-z])=\4\?\.userTier\?\.upgradeSubscriptionText\|\|"";/,
+            '$1=!1;$2=$2?.state??"signedOut";var $3=$4&&$4.userTier?.description||"Max",$5=$4?.userTier?.upgradeSubscriptionText||"Google Gemini Max Plan & Custom JSON Providers";'
+        )
+        .replace(
+            /d\.loadCodeAssist\([^)]*\)\.catch\(([A-Za-z0-9_$]+)=>\{b\([A-Za-z0-9_$.]+\.CREDITS_FETCH_FAILED,\1\)\}\)/,
+            'd.loadCodeAssist?.(void 0,void 0,true)?.catch(()=>{})'
+        )
+        .replace(
+            /function ([A-Za-z0-9_$]+)\(\)\{var a=([A-Za-z0-9_$]+)\(\)\.core\.cloudCodeService,b=([A-Za-z0-9_$]+)\(\)\.get\("models"\)\?\.geminiModelsOnly===!0;return\(0,([A-Za-z0-9_$]+)\.useMemo\)\(\(\)=>\{if\(!b\|\|!a\.retrieveUserQuotaSummary\)return a;/,
+            (_m, fnName, rdSym, hkSym, reactUseMemo) =>
+                `function ${fnName}(){var _rc=${rdSym}().core;if(typeof window!=="undefined")window.__agyCore=_rc;var a=_rc.cloudCodeService,b=${hkSym}().get("models")?.geminiModelsOnly===!0;return(0,${reactUseMemo}.useMemo)(()=>{if(typeof window!=="undefined"&&window.__AGY_CURRENT_AUTH_MODE__!=="google_oauth")return{...a,retrieveUserQuotaSummary:async()=>fetch("${gwBase}/__agy_quota").then(r=>r.json()).then(j=>{if(j&&j.modelContextLimits)Object.assign(_agyModelCtxMap,j.modelContextLimits);if(j&&j.telemetry)Object.assign(_agyTelemetryState,j.telemetry);return j})};if(a&&a.retrieveUserQuotaSummary){var _origQ=a.retrieveUserQuotaSummary.bind(a);return{...a,retrieveUserQuotaSummary:async(..._qa)=>{let _qr=await _origQ(..._qa);try{if(_qr?.response?.groups)fetch("${gwBase}/__agy_auth/report_oauth_quota",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({groups:_qr.response.groups})}).catch(()=>{})}catch{}return _qr}};}if(!b||!a.retrieveUserQuotaSummary)return a;`
+        );
+
+    // 1b. Google OAuth Per-Model Auto Account Rotation + Live OAuth Speed Start (v2.29 & v2.32+)
+    txt = txt.replace(
+        /l=async ([a-z])=>\{var \{signal:v,\.\.\.w\}=\1;\1=w\.senderWindowId\?\?([A-Za-z0-9_$]+)\(\);var x=([A-Za-z0-9_$]+)\(([A-Za-z0-9_$]+),\{\.\.\.w,\.\.\.\(\1\?\{senderWindowId:\1\}:\{\}\)\}\);([A-Za-z0-9_$]+\(x\.cascadeId,x\);)?return f\(y=>v\?y\.sendUserCascadeMessage\(x,\{signal:v\}\):y\.sendUserCascadeMessage\(x\)\)\}/g,
+        (_m, arg, winFn, pbFn, msgSchema, r0aCall) =>
+            `l=async ${arg}=>{var {signal:v,...w}=${arg};${arg}=w.senderWindowId??${winFn}();var x=${pbFn}(${msgSchema},{...w,...(${arg}?{senderWindowId:${arg}}:{})});${r0aCall || ""}if(typeof window!=="undefined"&&window.__AGY_CURRENT_AUTH_MODE__==="google_oauth"){_agyOAuthStream={startMs:Date.now(),firstMs:0,chars:0,lastTickMs:0};_agyEmitTel({isStreaming:!0});try{let _pr=await fetch("${gwBase}/__agy_auth/auto_rotate_for_model",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:_agyActiveModelHint||"",exhaustedError:!1})}).then(r=>r.json());if(_pr?.rotated){try{await window.__agyCore?.authService?.checkCurrentAuthStatus?.();await window.__agyCore?.cloudCodeService?.loadCodeAssist?.(void 0,void 0,!0)}catch{}if(window.__agyShowToast)window.__agyShowToast("Model quota reached — switched to "+(_pr.newAccountLabel||"next Google Account"))}}catch{}}try{return await f(y=>v?y.sendUserCascadeMessage(x,{signal:v}):y.sendUserCascadeMessage(x))}catch(_err){if(typeof window!=="undefined"&&window.__AGY_CURRENT_AUTH_MODE__==="google_oauth"&&/RESOURCE_EXHAUSTED|quota|429|rate.?limit|exhausted/i.test(String(_err?.message||_err||""))){try{let _rr=await fetch("${gwBase}/__agy_auth/auto_rotate_for_model",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:_agyActiveModelHint||"",exhaustedError:!0})}).then(r=>r.json());if(_rr?.rotated){try{await window.__agyCore?.authService?.checkCurrentAuthStatus?.();await window.__agyCore?.cloudCodeService?.loadCodeAssist?.(void 0,void 0,!0)}catch{}if(window.__agyShowToast)window.__agyShowToast("Quota reached — auto-switched to "+(_rr.newAccountLabel||"next Google Account"));return await f(y=>v?y.sendUserCascadeMessage(x,{signal:v}):y.sendUserCascadeMessage(x))}}catch{}}throw _err;}}`
+    );
+
+    // 1c. Live Per-Second Streaming Speed Hook for Google OAuth Mode (streamAgentStateUpdates)
+    txt = txt.replace(
+        /try\{let p=!0;for await\(let ([a-z]) of m\(d\.call\(a,f,g\)\)\)\{n\(\);try\{p&&\(p=!1,l\.resolve\(\)\),n\(yield m\(\1\)\)\}finally\{m\(\)\}\}n\(\);l\.resolve\(\)\}/,
+        'try{let p=!0;for await(let $1 of m(d.call(a,f,g))){n();try{if(typeof window!=="undefined"&&window.__AGY_CURRENT_AUTH_MODE__==="google_oauth"&&_agyOAuthStream.startMs>0){let _now=Date.now(),_sz=0;try{_sz=JSON.stringify($1).length}catch{}if(_sz>40){if(!_agyOAuthStream.firstMs)_agyOAuthStream.firstMs=_now;_agyOAuthStream.chars+=Math.round(_sz*0.35);if(_now-_agyOAuthStream.lastTickMs>=120){_agyOAuthStream.lastTickMs=_now;let _tok=Math.max(1,Math.round(_agyOAuthStream.chars/4)),_el=Math.max(80,_now-_agyOAuthStream.firstMs);_agyEmitTel({isStreaming:!0,lastTtftMs:Math.max(1,_agyOAuthStream.firstMs-_agyOAuthStream.startMs),lastTokPerSec:Number(((_tok/_el)*1000).toFixed(1))})}}}p&&(p=!1,l.resolve()),n(yield m($1))}finally{m()}}n();if(typeof window!=="undefined"&&window.__AGY_CURRENT_AUTH_MODE__==="google_oauth"&&_agyOAuthStream.startMs>0){_agyOAuthStream.startMs=0;_agyEmitTel({isStreaming:!1})}l.resolve()}'
+    );
+
+    // 2. Context Window Ring + Live Telemetry (v2.29 native bqc + v2.32 fallback _AgyLiveTelemetryRing)
+    txt = txt
+        .replaceAll('contextUsageIndicator:{feature:!1', 'contextUsageIndicator:{feature:!0')
+        .replaceAll('contextUsageIndicatorEnabled:{feature:{visible:!1}', 'contextUsageIndicatorEnabled:{feature:{visible:!0}')
+        .replace(/case "contextUsageIndicatorEnabled":return c\?\.get\("contextUsageIndicatorEnabled"\)===\s*"true"/g, 'case "contextUsageIndicatorEnabled":return c?.get("contextUsageIndicatorEnabled")!=="false"')
+        .replace(/([A-Za-z0-9_$]+)\("contextUsageIndicatorEnabled",([A-Za-z0-9_$]+)\)===!0/g, '$1("contextUsageIndicatorEnabled",!0)!==!1')
+        .replace(
+            'function $pc(a){a=QB(a);return Rl(a,{selector:Vpc,equalityFn:Wpc})}',
+            'function $pc(a){var _s=RB(a)||{getState:()=>void 0,onDidChange:()=>({dispose:()=>{}})};return Rl(_s,{selector:Vpc,equalityFn:Wpc})}'
+        )
+        .replaceAll(
+            'contextUsageIndicator:g_&&d?A.createElement(bqc,{conversationId:d}):void 0',
+            'contextUsageIndicator:g_?A.createElement(bqc,{conversationId:d,modelConfig:ia}):void 0'
+        )
+        .replace(
+            /contextUsageIndicator:([A-Za-z0-9_$]+)&&([A-Za-z0-9_$]+)&&d\?([A-Za-z0-9_$]+)\.createElement\(\1,\{conversationId:d\}\):void 0/,
+            `contextUsageIndicator:$1&&$2&&d?$3.createElement($1,{conversationId:d}):$3.createElement(_AgyLiveTelemetryRing,{conversationId:d,modelConfig:ua})`
+        )
+        .replace(
+            'function bqc({conversationId:a}){a=$pc(a);var b=hk().get("inputComponent")?.showModelUsage===!0,[c,d]=(0,A.useState)(!1),f=Zpc(),g=(0,A.useCallback)(k=>{k&&f();d(k)},[f]);if(!a)return null;var h=Math.round(a.usedFraction*100);',
+            'function bqc({conversationId:a,modelConfig:_mc}){a=$pc(a);if(_mc?.label||_mc?.modelId)_agyActiveModelHint=String(_mc.label||_mc.modelId);var [_tel,setTel]=(0,A.useState)(()=>({..._agyTelemetryState}));(0,A.useEffect)(()=>{var _onTel=s=>setTel(s);_agyTelListeners.add(_onTel);fetch("' + gwBase + '/__agy_quota").then(r=>r.json()).then(j=>{if(j&&j.modelContextLimits)Object.assign(_agyModelCtxMap,j.modelContextLimits);if(j&&j.telemetry)_agyEmitTel(j.telemetry)}).catch(()=>{});return()=>{_agyTelListeners.delete(_onTel)}},[]);var _mId=String(_mc?.modelId||"").toLowerCase(),_mLbl=String(_mc?.label||"").toLowerCase(),_mMax=_agyModelCtxMap[_mId]||_agyModelCtxMap[_mLbl]||(/gemma-4/i.test(_mId||_mLbl)?262144:(a?.maxTokens&&a.maxTokens!==256000?a.maxTokens:1048576));if(!a){a={usedTokens:0,maxTokens:_mMax,usedFraction:0,instructionTokens:0,conversationTokens:0,freeTokens:_mMax,compactedSinceLastCall:!1}}else if(a.maxTokens!==_mMax){var _uf=Math.min(1,a.usedTokens/_mMax);a={...a,maxTokens:_mMax,usedFraction:_uf,freeTokens:Math.max(0,_mMax-a.usedTokens)}}var b=!0,[c,d]=(0,A.useState)(!1),f=Zpc(),g=(0,A.useCallback)(k=>{if(k){f();fetch("' + gwBase + '/__agy_quota").then(r=>r.json()).then(j=>{if(j&&j.telemetry)_agyEmitTel(j.telemetry)}).catch(()=>{})}d(k)},[f]);var h=a.usedTokens>0?Math.max(1,Math.round(a.usedFraction*100)):0;'
+        )
+        .replace(
+            'A.createElement(cqc,{fraction:a.usedFraction}),A.createElement("span",null,a.compactedSinceLastCall?"~":"",h,"%")))',
+            'A.createElement(cqc,{fraction:a.usedFraction}),A.createElement("span",null,a.compactedSinceLastCall?"~":"",h,"%"),(_tel&&(_tel.lastTokPerSec>0||_tel.isStreaming))&&A.createElement("span",{className:"inline-flex items-center gap-1 ml-1 font-mono text-[11px] "+(_tel.isStreaming?"text-emerald-400":"text-muted-foreground")},_tel.isStreaming&&A.createElement("span",{className:"inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"}),(_tel.lastTokPerSec>0?Number(_tel.lastTokPerSec).toFixed(1):"0.0")," tok/s")))'
+        )
+        .replace(
+            'A.createElement(dqc,{summary:a,percent:h}),b&&',
+            'A.createElement(dqc,{summary:a,percent:h}),A.createElement("div",{className:"border-t border-border px-3 py-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] bg-muted/20"},A.createElement("div",{className:"flex justify-between"},A.createElement("span",{className:"text-muted-foreground"},"Speed"),A.createElement("span",{className:"font-mono font-medium text-foreground"},(_tel?.lastTokPerSec||0)+" tok/s")),A.createElement("div",{className:"flex justify-between"},A.createElement("span",{className:"text-muted-foreground"},"TTFT"),A.createElement("span",{className:"font-mono font-medium text-foreground"},(_tel?.lastTtftMs||0)+" ms")),A.createElement("div",{className:"flex justify-between"},A.createElement("span",{className:"text-muted-foreground"},"Session"),A.createElement("span",{className:"font-mono font-medium text-foreground"},Xpc((_tel?.totalPromptTokens||0)+(_tel?.totalCompletionTokens||0)))),A.createElement("div",{className:"flex justify-between"},A.createElement("span",{className:"text-muted-foreground"},"Cost"),A.createElement("span",{className:"font-mono font-medium text-foreground"},"$"+Number(_tel?.totalCostUsd||0).toFixed(4)))),b&&'
+        );
+
+    // 3. Always show expandable Thinking / Thought Process blocks by default
+    txt = txt
+        .replaceAll(
+            'case "verboseConversationSteps":return a.rootProvider.getState().userConfig?.userSettings?.verboseConversationSteps??!1',
+            'case "verboseConversationSteps":return a.rootProvider.getState().userConfig?.userSettings?.verboseConversationSteps??!0'
+        )
+        .replace(/([A-Za-z0-9_$]+)\(\)\.verboseAgentChat\?\?!1/g, "$1().verboseAgentChat??!0")
+        .replace(/verboseAgentChat:([a-z])\}=[A-Za-z0-9_$]+\(\),([a-z])=\1\?\?!1/g, (m) => m.replace("??!1", "??!0"));
+
+    // 4. Full Rich 3D Marketplace + Classic Plugins + One-Click Install/Uninstall
+    txt = txt
+        .replaceAll('b.getCascadeNuxes({})', 'Promise.resolve({nuxes:[]})')
+        .replace(/v\.getAvailableCascadePlugins\([A-Za-z0-9_$]+\([A-Za-z0-9_$]+,[a-z]\)\)/g, 'Promise.resolve({plugins:[]})')
+        .replace(
+            /searchMarketplace:async ([a-z])=>\s*f\(v=>v\.searchMarketplace\([A-Za-z0-9_$]+\([A-Za-z0-9_$]+,\{query:\1\.query\?\?"",groupId:\1\.groupId\?\?"",pageToken:\1\.pageToken\?\?""\}\)\)\)/g,
+            `searchMarketplace:async $1=>fetch("${gwBase}/__agy_plugins/marketplace_search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:$1.query??"",groupId:$1.groupId??"",pageToken:$1.pageToken??""})}).then(r=>r.json())`
+        )
+        .replace(
+            /getMarketplaceFeatured:async\(\)=>f\(([a-z])=>\1\.getMarketplaceFeatured\([A-Za-z0-9_$]+\([A-Za-z0-9_$]+,\{\}\)\)\)/g,
+            `getMarketplaceFeatured:async()=>fetch("${gwBase}/__agy_plugins/marketplace_featured").then(r=>r.json())`
+        )
+        .replace(
+            /getMarketplaceCustomization:async ([a-z])=>f\(v=>v\.getMarketplaceCustomization\([A-Za-z0-9_$]+\([A-Za-z0-9_$]+,\{id:\1\.id,includePreview:\1\.includePreview\?\?!1\}\)\)\)/g,
+            `getMarketplaceCustomization:async $1=>fetch("${gwBase}/__agy_plugins/marketplace_item",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:$1.id})}).then(async r=>{const j=await r.json();if(!r.ok)throw new Error(j.error||"Not found");return j})`
+        )
+        .replace(
+            /installCustomization:async ([a-z])=>f\(v=>v\.installCustomization\([A-Za-z0-9_$]+\([A-Za-z0-9_$]+,\{id:\1\.id,bundleId:\1\.bundleId\}\)\)\)/g,
+            `installCustomization:async $1=>fetch("${gwBase}/__agy_plugins/install",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:$1.id})}).then(async r=>{const j=await r.json();if(!r.ok||!j.success)throw new Error(j.message||"Install failed");return j})`
+        )
+        .replace(
+            /function ([A-Za-z0-9_$]+)\(a,b\)\{return b\.find\(c=>([A-Za-z0-9_$]+)\(c\.installedFrom,a\)\)\}/,
+            'function $1(a,b){return b.find(c=>$2(c.installedFrom,a)||(c.path&&a?.id&&String(c.path).replace(/\\\\/g,"/").split("/").pop()===a.id))}'
+        )
+        .replace(
+            /getBuildWithGooglePlugins:async\(\)=>f\(([a-z])=>\1\.getBuildWithGooglePlugins\([A-Za-z0-9_$]+\([A-Za-z0-9_$]+,\{\}\)\)\)/g,
+            `getBuildWithGooglePlugins:async()=>fetch("${gwBase}/__agy_plugins/list").then(r=>r.json())`
+        )
+        .replace(
+            /downloadBuildWithGooglePlugin:async ([a-z])=>f\(async v=>\{var w=[A-Za-z0-9_$]+\([A-Za-z0-9_$]+\);w\.pluginId=\1\.uid;return v\.downloadBuildWithGooglePlugin\(w\)\}\)/g,
+            `downloadBuildWithGooglePlugin:async $1=>fetch("${gwBase}/__agy_plugins/install",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({uid:$1.uid})}).then(async r=>{const j=await r.json();if(!r.ok||!j.success)throw new Error(j.message||"Plugin install failed");return j})`
+        )
+        .replace(
+            /deletePlugin:async ([a-z])=>f\(async v=>\{var w=([A-Za-z0-9_$]+\([A-Za-z0-9_$]+\));w\.pluginId=\1\.pluginId;return v\.deletePlugin\(w\)\}\)/g,
+            `deletePlugin:async $1=>{await f(async v=>{var w=$2;w.pluginId=$1.pluginId;return v.deletePlugin(w)}).catch(()=>({}));await fetch("${gwBase}/__agy_plugins/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pluginId:$1.pluginId})}).catch(()=>null);return {}}`
+        )
+        .replace('h(C.plugins);let F=new Set;', 'h(C.plugins);let F=new Set(C.installedUids||[]);')
+        .replace(
+            '(G.path.endsWith(J)||G.path.endsWith(J+"/"))&&F.add(I)',
+            '(String(G.path||"").replace(/\\\\/g,"/").endsWith(J)||String(G.path||"").replace(/\\\\/g,"/").endsWith(J+"/"))&&F.add(I)'
+        );
+
+    // 4b. Inject Sleek 'Install from GitHub' Pill Button + Centered Backdrop Modal inside Customizations Header (v2.29 Fyc & v2.32 AWc)
+    txt = txt.replace(
+        /function ([A-Za-z0-9_$]+)\(\{tab:a,onSelect:b\}\)\{return ([A-Za-z0-9_$]+)\.createElement\("nav",\{"aria-label":"Customizations views",className:"agy-pill inline-flex items-center h-8 rounded-lg border border-border bg-secondary\/20 p-0\.5 gap-0\.5 select-none","data-testid":"plugins-tabs"\},([A-Za-z0-9_$]+)\.map\(\(\{tab:c,to:d,label:f\}\)=>\{var g=c===a;return \2\.createElement\(([A-Za-z0-9_$]+),\{key:c,to:d,activeOptions:\{exact:!0\},"aria-current":g\?"page":void 0,onClick:\(\)=>\{g\|\|b\(c\)\},className:([A-Za-z0-9_$]+)\("([^"]+)",\s*g\?"bg-secondary text-foreground":"text-secondary-foreground hover:text-foreground"\),"data-testid":`plugins-tab-\$\{c\}`\},f\)\}\)\)\}/,
+        (_m, fnName, rSym, tabsArr, linkSym, cnSym, baseCls) =>
+            `function ${fnName}({tab:a,onSelect:b}){var [ghOpen,setGhOpen]=(0,${rSym}.useState)(!1),[ghUrl,setGhUrl]=(0,${rSym}.useState)(""),[ghBusy,setGhBusy]=(0,${rSym}.useState)(!1),[ghMsg,setGhMsg]=(0,${rSym}.useState)(null),inputRef=(0,${rSym}.useRef)(null);(0,${rSym}.useEffect)(()=>{if(!ghOpen)return;setTimeout(()=>{inputRef.current?.focus()},30);var onKey=ev=>{if(ev.key==="Escape"&&!ghBusy){setGhOpen(!1);setGhMsg(null)}};window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey)},[ghOpen,ghBusy]);var doGhInstall=async()=>{if(!ghUrl.trim()||ghBusy)return;setGhBusy(!0);setGhMsg(null);try{var r=await fetch("${gwBase}/__agy_plugins/install_github",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:ghUrl.trim()})}),j=await r.json();if(!r.ok||!j.success)throw new Error(j.message||"Install failed");setGhMsg({ok:!0,text:j.message||"Installed successfully!"});setGhUrl("");window.dispatchEvent(new Event("focus"));setTimeout(()=>{setGhOpen(!1);setGhMsg(null);b("installed");window.location.hash="#/customizations/installed"},800)}catch(err){setGhMsg({ok:!1,text:err.message})}finally{setGhBusy(!1)}};var ghIcon=${rSym}.createElement("svg",{viewBox:"0 0 16 16",width:14,height:14,fill:"currentColor","aria-hidden":"true",className:"shrink-0"},${rSym}.createElement("path",{d:"M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"}));return ${rSym}.createElement(${rSym}.Fragment,null,${rSym}.createElement("div",{className:"inline-flex items-center gap-2"},${rSym}.createElement("button",{type:"button","data-testid":"install-from-github-btn",onClick:()=>{setGhOpen(!0);setGhMsg(null)},className:"agy-pill inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-lg border border-border bg-secondary/30 hover:bg-secondary text-xs font-medium text-foreground shrink-0 whitespace-nowrap transition-colors cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-primary"},ghIcon,${rSym}.createElement("span",null,"Install from GitHub")),${rSym}.createElement("nav",{"aria-label":"Customizations views",className:"agy-pill inline-flex items-center h-8 rounded-lg border border-border bg-secondary/20 p-0.5 gap-0.5 select-none","data-testid":"plugins-tabs"},${tabsArr}.map(({tab:c,to:d,label:f})=>{var g=c===a;return ${rSym}.createElement(${linkSym},{key:c,to:d,activeOptions:{exact:!0},"aria-current":g?"page":void 0,onClick:()=>{g||b(c)},className:${cnSym}("${baseCls}",g?"bg-secondary text-foreground":"text-secondary-foreground hover:text-foreground"),"data-testid":"plugins-tab-"+c},f)}))),ghOpen&&${rSym}.createElement("div",{"data-testid":"github-install-modal",onMouseDown:ev=>{if(ev.target===ev.currentTarget&&!ghBusy){setGhOpen(!1);setGhMsg(null)}},style:{position:"fixed",inset:0,zIndex:99999,backgroundColor:"rgba(0,0,0,0.62)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}},${rSym}.createElement("div",{className:"w-full max-w-md rounded-2xl border border-border bg-background text-foreground shadow-2xl p-5 flex flex-col gap-4",onMouseDown:ev=>ev.stopPropagation()},${rSym}.createElement("div",{className:"flex items-start justify-between gap-3"},${rSym}.createElement("div",{className:"flex items-center gap-2.5"},${rSym}.createElement("div",{className:"w-8 h-8 rounded-lg bg-secondary flex items-center justify-center text-foreground shrink-0"},ghIcon),${rSym}.createElement("div",{className:"flex flex-col"},${rSym}.createElement("h2",{className:"text-sm font-semibold text-foreground m-0"},"Install from GitHub"),${rSym}.createElement("span",{className:"text-xs text-muted-foreground"},"Install any plugin, SKILL.md, rules, or MCP server repo"))),${rSym}.createElement("button",{type:"button",disabled:ghBusy,onClick:()=>{setGhOpen(!1);setGhMsg(null)},className:"p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary bg-transparent border-none cursor-pointer"},${rSym}.createElement(${ICON},{name:"close",size:16}))),${rSym}.createElement("div",{className:"flex flex-col gap-2"},${rSym}.createElement("label",{className:"text-xs font-medium text-foreground"},"Repository URL or owner/repo"),${rSym}.createElement("input",{ref:inputRef,type:"text",placeholder:"https://github.com/owner/repo",value:ghUrl,disabled:ghBusy,onChange:e=>setGhUrl(e.target.value),onKeyDown:e=>{if(e.key==="Enter")doGhInstall()},className:"w-full h-9 px-3 rounded-lg !bg-muted/60 !border !border-border text-xs font-mono text-foreground outline-none focus:!ring-1 focus:!ring-primary"}),${rSym}.createElement("div",{className:"text-[11px] text-muted-foreground leading-relaxed"},"Supports full repo URLs, ",${rSym}.createElement("code",{className:"px-1 py-0.5 rounded bg-muted font-mono"},"owner/repo"),", subfolder URLs (",${rSym}.createElement("code",{className:"px-1 py-0.5 rounded bg-muted font-mono"},".../tree/main/skills/my-skill"),"), or direct ",${rSym}.createElement("code",{className:"px-1 py-0.5 rounded bg-muted font-mono"},".zip")," links.")),ghMsg&&${rSym}.createElement("div",{className:"px-3 py-2 rounded-lg border text-xs "+(ghMsg.ok?"bg-emerald-500/10 border-emerald-500/30 text-emerald-400":"bg-red-500/10 border-red-500/30 text-red-400")},ghMsg.text),${rSym}.createElement("div",{className:"flex items-center justify-end gap-2 pt-1"},${rSym}.createElement(${BTN},{variant:"secondary",size:"sm",disabled:ghBusy,onClick:()=>{setGhOpen(!1);setGhMsg(null)}},"Cancel"),${rSym}.createElement(${BTN},{variant:"primary",size:"sm",disabled:ghBusy||!ghUrl.trim(),onClick:doGhInstall},ghBusy?"Downloading & Installing...":"Install Plugin")))))}`
+    );
+
+    // 5. Enable Model Usage / Quota in BOTH Model Selector ('View Usage' submenu) & Context Popover
+    txt = txt
+        .replace(/[A-Za-z0-9_$]+\(\)\.get\("inputComponent"\)\?\.showModelUsage===!0/g, "!0")
+        .replace(
+            /([A-Za-z0-9_$]+)\.createElement\([A-Za-z0-9_$]+,\{key:n\.displayName\|\|p\},n\.displayName&&\1\.createElement\([A-Za-z0-9_$]+,\{className:"!pt-1 !pb-0 !text-foreground"\},n\.displayName\),/,
+            '$1.createElement("div",{key:n.displayName||p,className:"flex flex-col gap-0.5"},n.displayName&&$1.createElement("div",{className:"px-2 pt-1.5 pb-0.5 text-xs font-medium text-foreground"},n.displayName),'
+        );
+
+    // 6. Bidirectional RTL / Persian + English Markdown & Input Fix
+    txt = txt
+        .replace(
+            /function ([A-Za-z0-9_$]+)\(a\)\{var b=\[\];a\.forEach\(\(c,d\)=>\{if\(typeof c!=="string"\)b\.push\(\{key:`node-\$\{d\}`,content:c\}\);else\{var f=c\.split\(" "\);f\.forEach\(\(g,h\)=>\{var k=h===f\.length-1;!g&&k\|\|b\.push\(\{key:`\$\{d\}-\$\{h\}`,content:k\?g:`\$\{g\} `\}\)\}\)\}\}\);return b\}/,
+            'function $1(a){var _hasRtl=a.some(x=>typeof x==="string"&&/[\\u0590-\\u08FF\\uFB1D-\\uFDFF\\uFE70-\\uFEFF]/.test(x)),b=[];a.forEach((c,d)=>{if(typeof c!=="string"||_hasRtl)b.push({key:`node-${d}`,content:c});else{var f=c.split(" ");f.forEach((g,h)=>{var k=h===f.length-1;!g&&k||b.push({key:`${d}-${h}`,content:k?g:`${g} `})})}});return b}'
+        )
+        .replace(
+            /var ([A-Za-z0-9_$]+)=\(\{value:a,className:b,\.\.\.c\}\)=>([A-Za-z0-9_$]+)\.createElement\("code",\{(?:dir:"ltr",)?\.\.\.c,className:([A-Za-z0-9_$]+)\("whitespace-pre-wrap",b\),style:\{wordBreak:"break-word"\}\},a\);/,
+            'var $1=({value:a,className:b,...c})=>$2.createElement("code",{...c,dir:"ltr",className:$3("whitespace-pre-wrap",b),style:{wordBreak:"break-word",unicodeBidi:"isolate",direction:"ltr"}},a);'
+        )
+        .replace(
+            /pre:\(\{node:a,\s*\.\.\.b\}\)=>\{a=([A-Za-z0-9_$]+)\(\);return ([A-Za-z0-9_$]+)\.createElement\("pre",\{(?:dir:"ltr",)?\.\.\.b,style:\{\.\.\.b\.style,\.\.\.a\}\}\)\}/,
+            'pre:({node:a,...b})=>{a=$1();return $2.createElement("pre",{...b,dir:"ltr",style:{direction:"ltr",textAlign:"left",...b.style,...a}})}'
+        )
+        .replace(
+            /p:\(\{node:a,\.\.\.b\}\)=>\{var \{animate:c,claimStaggerDelays:d\}=([A-Za-z0-9_$]+)\(\);return ([A-Za-z0-9_$]+)\.createElement\("p",\{\.\.\.b,className:([A-Za-z0-9_$]+)\(b\.className\)\},/,
+            'p:({node:a,...b})=>{var {animate:c,claimStaggerDelays:d}=$1();return $2.createElement("p",{dir:"auto",...b,className:$3(b.className)},'
+        )
+        .replace(
+            /const ([A-Za-z0-9_$]+)=a=>\{var b=\(\{node:c,\.\.\.d\}\)=>\{var \{animate:f,claimStaggerDelays:g\}=([A-Za-z0-9_$]+)\(\);return ([A-Za-z0-9_$]+)\.createElement\(a,\{\.\.\.d,className:([A-Za-z0-9_$]+)\(d\.className\)\},/,
+            'const $1=a=>{var b=({node:c,...d})=>{var {animate:f,claimStaggerDelays:g}=$2();return $3.createElement(a,{dir:"auto",...d,className:$4(d.className)},'
+        )
+        .replace(
+            'if(h)return A.createElement("li",{...f,style:{...f.style,...a},className:dj(f.className,"task-list-item")}',
+            'if(h)return A.createElement("li",{dir:"auto",...f,style:{...f.style,...a},className:dj(f.className,"task-list-item")}'
+        )
+        .replace(
+            'if(k){let {checkbox:m,inlineContent:n,sublists:p}=lVb(g);return A.createElement("li",{...f,style:{...f.style,\n...a},className:dj(f.className,"task-checked")}',
+            'if(k){let {checkbox:m,inlineContent:n,sublists:p}=lVb(g);return A.createElement("li",{dir:"auto",...f,style:{...f.style,\n...a},className:dj(f.className,"task-checked")}'
+        )
+        .replace(
+            'return A.createElement("li",{...f,style:{...f.style,...a},className:f.className},d(g))',
+            'return A.createElement("li",{dir:"auto",...f,style:{...f.style,...a},className:f.className},d(g))'
+        )
+        .replace(
+            /blockquote:\(\{node:a,\.\.\.b\}\)=>\{a=([A-Za-z0-9_$]+)\(\);return b\.className\?\.includes\("markdown-alert"\)\?([A-Za-z0-9_$]+)\.createElement\("blockquote",\{\.\.\.b,style:\{\.\.\.b\.style,\.\.\.a\}\}\):\2\.createElement\("blockquote",\{\.\.\.b,className:([A-Za-z0-9_$]+)\("relative my-2 pl-4 before:absolute before:inset-y-0 before:left-0 before:w-1 before:rounded-full before:bg-border",b\.className\),style:\{\.\.\.b\.style,\.\.\.a\}\}\)\}/,
+            'blockquote:({node:a,...b})=>{a=$1();return b.className?.includes("markdown-alert")?$2.createElement("blockquote",{dir:"auto",...b,style:{...b.style,...a}}):$2.createElement("blockquote",{dir:"auto",...b,className:$3("relative my-2 pl-4 before:absolute before:inset-y-0 before:left-0 before:w-1 before:rounded-full before:bg-border",b.className),style:{...b.style,...a}})}'
+        )
+        .replace(
+            /th:\(\{node:a,style:b,\.\.\.c\}\)=>([A-Za-z0-9_$]+)\.createElement\("th",\{\.\.\.c,style:([A-Za-z0-9_$]+)\(b\)/,
+            'th:({node:a,style:b,...c})=>$1.createElement("th",{dir:"auto",...c,style:$2(b)'
+        )
+        .replace(
+            /td:\(\{node:a,style:b,\.\.\.c\}\)=>([A-Za-z0-9_$]+)\.createElement\("td",\{\.\.\.c,style:([A-Za-z0-9_$]+)\(b\)/,
+            'td:({node:a,style:b,...c})=>$1.createElement("td",{dir:"auto",...c,style:$2(b)'
+        );
+
+    return txt;
 }
 
 // ---------------------------------------------------------------------------
 // Live Patched UI Bundle Serving
 // ---------------------------------------------------------------------------
 function servePatchedUiBundle(lsPort, gwPort, res) {
-    const currentMode = getCurrentAuthMode();
-    const cacheKey = `v2:${gwPort}`;
+    const cacheKey = `v3:${gwPort}`;
     const cached = patchedBundleCache.get(cacheKey);
     if (cached) {
         res.writeHead(200, {
@@ -4770,309 +5146,7 @@ function servePatchedUiBundle(lsPort, gwPort, res) {
         upRes.on("data", d => chunks.push(d));
         upRes.on("end", () => {
             const gwBase = `https://127.0.0.1:${gwPort}`;
-            const defaultFlagsJson = JSON.stringify(DEFAULT_UNLOCKED_FLAGS);
-            const providersScreenComponent = buildProvidersJsonScreenCode(gwBase);
-            const i18nEngineCode = buildAppearanceLanguageAndI18nCode(gwBase);
-            let txt = Buffer.concat(chunks).toString("utf8");
-
-            txt = txt
-                // 0a. Remove 'Check for Updates' from top-left Antigravity dropdown menu
-                .replace(
-                    'd?.checkForUpdates&&v.push({label:"Check for Updates",onClick:()=>{d.checkForUpdates?.()}});',
-                    ''
-                )
-                // 0. Enable DevMode + Unlock All Hidden Mendel Flags & UserCohort-Gated Features
-                .replace(
-                    'function Cj(){return typeof window==="undefined"?!1:!!window.__APP_CONFIG__?.devMode}',
-                    'function Cj(){return!0}'
-                )
-                .replace(
-                    'async function fka(a){var b=e,c=e;try{try{let d=c(await b(a.getMendelFlags($b(sha,{})))).experimentConfig?.experiments??[];a={};for(let f of d)f.keyString&&(a[f.keyString]=f);return a}',
-                    `async function fka(a){var _lsRef=a,b=e,c=e;try{try{let d=c(await b(a.getMendelFlags($b(sha,{})))).experimentConfig?.experiments??[];a={};for(let _fl of ${defaultFlagsJson})a[_fl]={keyString:_fl,disabled:!1};for(let f of d)f.keyString&&(a[f.keyString]=f);try{let _ov={};for(let _fl of ${defaultFlagsJson})_ov[_fl]=!0;let _raw=typeof window!=="undefined"?window.localStorage.getItem("jetski.developer.customFlagOverrides"):null;if(_raw){let _parsed=JSON.parse(_raw);if(_parsed&&typeof _parsed==="object")Object.assign(_ov,_parsed)}${process.platform === "win32" ? '_ov["enable-programmatic-tools"]=!1;' : ''}_lsRef.setMendelFlagOverrides($b(Yga,{overrides:_ov})).catch(()=>{})}catch{}return a}`
-                )
-                .replaceAll(
-                    'userCohort:["google"],customFlag:"labs-inline-actions"',
-                    'customFlag:"labs-inline-actions"'
-                )
-                .replaceAll(
-                    'userCohort:["google"],customFlag:"labs-autonomous-mode"',
-                    'customFlag:"labs-autonomous-mode"'
-                )
-                .replaceAll(
-                    'userCohort:["google"],\ncustomFlag:"enable-conversation-sharing-prototype"',
-                    'customFlag:"enable-conversation-sharing-prototype"'
-                )
-                .replaceAll(
-                    'customFlag:"context-window-selector",userCohort:["google"]',
-                    'customFlag:"context-window-selector"'
-                )
-                .replaceAll(
-                    'customFlag:"enable-file-viewer-keyboard-navigation",userCohort:["google"]',
-                    'customFlag:"enable-file-viewer-keyboard-navigation"'
-                )
-                .replaceAll(
-                    'customFlag:"enable-plugin-themes",userCohort:["google"]',
-                    'customFlag:"enable-plugin-themes"'
-                )
-                .replace(
-                    'w7c={feature:{visible:!1},applyFirst:[{runtimeGating:{userCohort:["google"]},feature:{visible:!0}}],important:[W$]}',
-                    'w7c={feature:{visible:!0},important:[W$]}'
-                )
-                .replace(
-                    'labs:{feature:!1,applyFirst:[{runtimeGating:{userCohort:["google"]},feature:!0}]}',
-                    'labs:{feature:!0}'
-                )
-                .replace(
-                    'openArtifactInNewWindow:{feature:!1,applyFirst:[{runtimeGating:{host:[Xi.Web],userCohort:["google"]},feature:!0}]}',
-                    'openArtifactInNewWindow:{feature:!0}'
-                )
-                .replace(
-                    'enableCompactionNotification:{feature:a.enableCompactionNotification??!1}',
-                    'enableCompactionNotification:{feature:!0}'
-                )
-                .replace(
-                    'enableRawErrorDetails:{feature:!1}',
-                    'enableRawErrorDetails:{feature:!0}'
-                )
-                .replace(
-                    'enableDefaultCustomizationsSetting:{feature:a.enableDefaultCustomizationsSetting??!1},enableBuildWithGooglePlugins:{feature:a.enableBuildWithGooglePlugins??!1}',
-                    'enableDefaultCustomizationsSetting:{feature:!0},enableBuildWithGooglePlugins:{feature:!0}'
-                )
-
-                // 0b. Inject Native 'API Key & Account' Screen into Settings Sidebar
-                .replace(
-                    '{screen:"Models"},{screen:"Customizations"}',
-                    '{screen:"Models"},{screen:"API Key & Account"},{screen:"Customizations"}'
-                )
-                .replace(
-                    'Rpb="General;Appearance;Project 4K;Shortcuts;Notifications;Models;Customizations;Developer;Running"',
-                    'Rpb="General;Appearance;Project 4K;Shortcuts;Notifications;Models;API Key & Account;Customizations;Developer;Running"'
-                )
-                .replace(
-                    'h&&(m=m.filter(p=>p==="Regroup Google3 Chats"||p==="Shortcuts"||p==="Running"||g.has(p)))',
-                    'h&&(m=m.filter(p=>p==="API Key & Account"||p==="Developer"||p==="Notifications"||p==="Regroup Google3 Chats"||p==="Shortcuts"||p==="Running"||g.has(p)))'
-                )
-                .replace(
-                    'function hzb(a){switch(a){',
-                    () => `${providersScreenComponent}\n${i18nEngineCode}\nfunction hzb(a){switch(a){case "API Key & Account":return A.createElement(_AgyApiKeysScreen,null);`
-                )
-                .replace(
-                    'return A.createElement(UP,{title:"Appearance",description:"Configure the agent\'s visual theme and display preferences."},A.createElement(OQ,{screen:"Appearance",sectionFilter:f=>f==="Chat"})',
-                    'return A.createElement(UP,{title:"Appearance",description:"Configure the agent\'s visual theme and display preferences."},A.createElement(_AgyAppearanceLanguageCard,null),A.createElement(OQ,{screen:"Appearance",sectionFilter:f=>f==="Chat"})'
-                )
-                .replace(
-                    'A.createElement("div",{style:{display:c==="Models"?"block":"none"}},A.createElement(Tub,{isActive:c==="Models"})),',
-                    'A.createElement("div",{style:{display:c==="Models"?"block":"none"}},A.createElement(Tub,{isActive:c==="Models"})),A.createElement("div",{style:{display:c==="API Key & Account"?"block":"none"}},A.createElement(_AgyApiKeysScreen,null)),'
-                )
-
-                // 1. Account Branding + Dynamic Quota Sync (populates _agyModelCtxMap too!)
-                .replace(
-                    'g=f?.name?.trim(),h=f?.email?.trim()',
-                    `g=f?.name?.trim()||"Google Gemini",h=((f?.email&&f.email!=="gemini@google.com"&&fetch("${gwBase}/__agy_auth/record_email",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:f.email,name:f.name||""})}).catch(()=>{})),f?.email?.trim()||"gemini@google.com")`
-                )
-                .replace(
-                    'var C=d?"Enterprise Gateway":c&&c.userTier?.description',
-                    'var C=d?"Max":c&&c.userTier?.description||"Max"'
-                )
-                .replace(
-                    'description:d?"Authenticated via Enterprise Gateway":',
-                    'description:d?"Google Gemini Max Plan":'
-                )
-                .replace(
-                    'description:"Managed by Enterprise Gateway"',
-                    'description:"gemini@google.com"'
-                )
-                .replace(
-                    'var Tub=({isActive:a})=>{var b=tB(),c=Ql(mu),d=dm(),f=(0,A.useRef)(0),g=iJ().product.nameShort,h=Ql(Il),k=h?.context.isGcpTos??!1;h=h?.state??"signedOut";var l=c&&c.userTier?.description,m=c?.userTier?.upgradeSubscriptionText||"";',
-                    'var Tub=({isActive:a})=>{var b=tB(),c=Ql(mu),d=dm(),f=(0,A.useRef)(0),g=iJ().product.nameShort,h=Ql(Il),k=!1;h=h?.state??"signedOut";var l=c?.userTier?.description||"Max",m=c?.userTier?.upgradeSubscriptionText||"Google Gemini Max Plan & Custom JSON Providers";'
-                )
-                .replace(
-                    'd.loadCodeAssist(void 0,void 0,E).catch(F=>{b(Ng.CREDITS_FETCH_FAILED,F)})',
-                    'd.loadCodeAssist?.(void 0,void 0,E)?.catch(()=>{})'
-                )
-                .replace(
-                    'function dm(){var a=rd().core.cloudCodeService,b=hk().get("models")?.geminiModelsOnly===!0;return(0,A.useMemo)(()=>{if(!b||!a.retrieveUserQuotaSummary)return a;',
-                    `function dm(){var _rc=rd().core;if(typeof window!=="undefined")window.__agyCore=_rc;var a=_rc.cloudCodeService,b=hk().get("models")?.geminiModelsOnly===!0;return(0,A.useMemo)(()=>{if(typeof window!=="undefined"&&window.__AGY_CURRENT_AUTH_MODE__!=="google_oauth")return{...a,retrieveUserQuotaSummary:async()=>fetch("${gwBase}/__agy_quota").then(r=>r.json()).then(j=>{if(j&&j.modelContextLimits)Object.assign(_agyModelCtxMap,j.modelContextLimits);if(j&&j.telemetry)Object.assign(_agyTelemetryState,j.telemetry);return j})};if(a&&a.retrieveUserQuotaSummary){var _origQ=a.retrieveUserQuotaSummary.bind(a);return{...a,retrieveUserQuotaSummary:async(..._qa)=>{let _qr=await _origQ(..._qa);try{if(_qr?.response?.groups)fetch("${gwBase}/__agy_auth/report_oauth_quota",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({groups:_qr.response.groups})}).catch(()=>{})}catch{}return _qr}};}if(!b||!a.retrieveUserQuotaSummary)return a;`
-                )
-
-                // 1b. Google OAuth Per-Model Auto Account Rotation on Quota Exhaustion
-                .replaceAll(
-                    'l=async t=>{var {signal:v,...w}=t;t=w.senderWindowId??Y0a();var x=$b(vi,{...w,...(t?{senderWindowId:t}:{})});R0a(x.cascadeId,x);return f(y=>v?y.sendUserCascadeMessage(x,{signal:v}):y.sendUserCascadeMessage(x))}',
-                    `l=async t=>{var {signal:v,...w}=t;t=w.senderWindowId??Y0a();var x=$b(vi,{...w,...(t?{senderWindowId:t}:{})});R0a(x.cascadeId,x);if(typeof window!=="undefined"&&window.__AGY_CURRENT_AUTH_MODE__==="google_oauth"){try{let _pr=await fetch("${gwBase}/__agy_auth/auto_rotate_for_model",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:_agyActiveModelHint||"",exhaustedError:!1})}).then(r=>r.json());if(_pr?.rotated){try{await window.__agyCore?.authService?.checkCurrentAuthStatus?.();await window.__agyCore?.cloudCodeService?.loadCodeAssist?.(void 0,void 0,!0)}catch{}if(window.__agyShowToast)window.__agyShowToast("Model quota reached — switched to "+(_pr.newAccountLabel||"next Google Account"))}}catch{}}try{return await f(y=>v?y.sendUserCascadeMessage(x,{signal:v}):y.sendUserCascadeMessage(x))}catch(_err){if(typeof window!=="undefined"&&window.__AGY_CURRENT_AUTH_MODE__==="google_oauth"&&/RESOURCE_EXHAUSTED|quota|429|rate.?limit|exhausted/i.test(String(_err?.message||_err||""))){try{let _rr=await fetch("${gwBase}/__agy_auth/auto_rotate_for_model",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:_agyActiveModelHint||"",exhaustedError:!0})}).then(r=>r.json());if(_rr?.rotated){try{await window.__agyCore?.authService?.checkCurrentAuthStatus?.();await window.__agyCore?.cloudCodeService?.loadCodeAssist?.(void 0,void 0,!0)}catch{}if(window.__agyShowToast)window.__agyShowToast("Quota reached — auto-switched to "+(_rr.newAccountLabel||"next Google Account"));return await f(y=>v?y.sendUserCascadeMessage(x,{signal:v}):y.sendUserCascadeMessage(x))}}catch{}}throw _err;}}`
-                )
-
-                // 2. Context Window Ring (uses exact limit.context from antigravity.json per model!)
-                .replaceAll(
-                    'contextUsageIndicator:{feature:!1',
-                    'contextUsageIndicator:{feature:!0'
-                )
-                .replaceAll(
-                    'contextUsageIndicatorEnabled:{feature:{visible:!1}',
-                    'contextUsageIndicatorEnabled:{feature:{visible:!0}'
-                )
-                .replaceAll(
-                    'case "contextUsageIndicatorEnabled":return c?.get("contextUsageIndicatorEnabled")==="true"',
-                    'case "contextUsageIndicatorEnabled":return c?.get("contextUsageIndicatorEnabled")!=="false"'
-                )
-                .replaceAll(
-                    'Zl("contextUsageIndicatorEnabled",SN)===!0',
-                    'Zl("contextUsageIndicatorEnabled",!0)!==!1'
-                )
-                .replace(
-                    'function $pc(a){a=QB(a);return Rl(a,{selector:Vpc,equalityFn:Wpc})}',
-                    'function $pc(a){var _s=RB(a)||{getState:()=>void 0,onDidChange:()=>({dispose:()=>{}})};return Rl(_s,{selector:Vpc,equalityFn:Wpc})}'
-                )
-                .replaceAll(
-                    'contextUsageIndicator:g_&&d?A.createElement(bqc,{conversationId:d}):void 0',
-                    'contextUsageIndicator:g_?A.createElement(bqc,{conversationId:d,modelConfig:ia}):void 0'
-                )
-                // 1c. Live Per-Second Streaming Speed Hook for Google OAuth Mode too (R0a + streamAgentStateUpdates)
-                .replace(
-                    'function R0a(a,b){a&&Q0a.set(a,{promptSentMs:performance.now(),req:b})}',
-                    'function R0a(a,b){a&&Q0a.set(a,{promptSentMs:performance.now(),req:b});if(typeof window!=="undefined"&&window.__AGY_CURRENT_AUTH_MODE__==="google_oauth"){_agyOAuthStream={startMs:Date.now(),firstMs:0,chars:0,lastTickMs:0};_agyEmitTel({isStreaming:!0})}}'
-                )
-                .replace(
-                    'try{let p=!0;for await(let r of m(d.call(a,f,g))){n();try{p&&(p=!1,l.resolve()),n(yield m(r))}finally{m()}}n();l.resolve()}',
-                    'try{let p=!0;for await(let r of m(d.call(a,f,g))){n();try{if(typeof window!=="undefined"&&window.__AGY_CURRENT_AUTH_MODE__==="google_oauth"&&_agyOAuthStream.startMs>0){let _now=Date.now(),_sz=0;try{_sz=JSON.stringify(r).length}catch{}if(_sz>40){if(!_agyOAuthStream.firstMs)_agyOAuthStream.firstMs=_now;_agyOAuthStream.chars+=Math.round(_sz*0.35);if(_now-_agyOAuthStream.lastTickMs>=120){_agyOAuthStream.lastTickMs=_now;let _tok=Math.max(1,Math.round(_agyOAuthStream.chars/4)),_el=Math.max(80,_now-_agyOAuthStream.firstMs);_agyEmitTel({isStreaming:!0,lastTtftMs:Math.max(1,_agyOAuthStream.firstMs-_agyOAuthStream.startMs),lastTokPerSec:Number(((_tok/_el)*1000).toFixed(1))})}}}p&&(p=!1,l.resolve()),n(yield m(r))}finally{m()}}n();if(typeof window!=="undefined"&&window.__AGY_CURRENT_AUTH_MODE__==="google_oauth"&&_agyOAuthStream.startMs>0){_agyOAuthStream.startMs=0;_agyEmitTel({isStreaming:!1})}l.resolve()}'
-                )
-                .replace(
-                    'function bqc({conversationId:a}){a=$pc(a);var b=hk().get("inputComponent")?.showModelUsage===!0,[c,d]=(0,A.useState)(!1),f=Zpc(),g=(0,A.useCallback)(k=>{k&&f();d(k)},[f]);if(!a)return null;var h=Math.round(a.usedFraction*100);',
-                    'function bqc({conversationId:a,modelConfig:_mc}){a=$pc(a);if(_mc?.label||_mc?.modelId)_agyActiveModelHint=String(_mc.label||_mc.modelId);var [_tel,setTel]=(0,A.useState)(()=>({..._agyTelemetryState}));(0,A.useEffect)(()=>{var _onTel=s=>setTel(s);_agyTelListeners.add(_onTel);fetch("' + gwBase + '/__agy_quota").then(r=>r.json()).then(j=>{if(j&&j.modelContextLimits)Object.assign(_agyModelCtxMap,j.modelContextLimits);if(j&&j.telemetry)_agyEmitTel(j.telemetry)}).catch(()=>{});return()=>{_agyTelListeners.delete(_onTel)}},[]);var _mId=String(_mc?.modelId||"").toLowerCase(),_mLbl=String(_mc?.label||"").toLowerCase(),_mMax=_agyModelCtxMap[_mId]||_agyModelCtxMap[_mLbl]||(/gemma-4/i.test(_mId||_mLbl)?262144:(a?.maxTokens&&a.maxTokens!==256000?a.maxTokens:1048576));if(!a){a={usedTokens:0,maxTokens:_mMax,usedFraction:0,instructionTokens:0,conversationTokens:0,freeTokens:_mMax,compactedSinceLastCall:!1}}else if(a.maxTokens!==_mMax){var _uf=Math.min(1,a.usedTokens/_mMax);a={...a,maxTokens:_mMax,usedFraction:_uf,freeTokens:Math.max(0,_mMax-a.usedTokens)}}var b=!0,[c,d]=(0,A.useState)(!1),f=Zpc(),g=(0,A.useCallback)(k=>{if(k){f();fetch("' + gwBase + '/__agy_quota").then(r=>r.json()).then(j=>{if(j&&j.telemetry)_agyEmitTel(j.telemetry)}).catch(()=>{})}d(k)},[f]);var h=a.usedTokens>0?Math.max(1,Math.round(a.usedFraction*100)):0;'
-                )
-                .replace(
-                    'A.createElement(cqc,{fraction:a.usedFraction}),A.createElement("span",null,a.compactedSinceLastCall?"~":"",h,"%")))',
-                    'A.createElement(cqc,{fraction:a.usedFraction}),A.createElement("span",null,a.compactedSinceLastCall?"~":"",h,"%"),(_tel&&(_tel.lastTokPerSec>0||_tel.isStreaming))&&A.createElement("span",{className:"inline-flex items-center gap-1 ml-1 font-mono text-[11px] "+(_tel.isStreaming?"text-emerald-400":"text-muted-foreground")},_tel.isStreaming&&A.createElement("span",{className:"inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"}),(_tel.lastTokPerSec>0?Number(_tel.lastTokPerSec).toFixed(1):"0.0")," tok/s")))'
-                )
-                .replace(
-                    'A.createElement(dqc,{summary:a,percent:h}),b&&',
-                    'A.createElement(dqc,{summary:a,percent:h}),A.createElement("div",{className:"border-t border-border px-3 py-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] bg-muted/20"},A.createElement("div",{className:"flex justify-between"},A.createElement("span",{className:"text-muted-foreground"},"Speed"),A.createElement("span",{className:"font-mono font-medium text-foreground"},(_tel?.lastTokPerSec||0)+" tok/s")),A.createElement("div",{className:"flex justify-between"},A.createElement("span",{className:"text-muted-foreground"},"TTFT"),A.createElement("span",{className:"font-mono font-medium text-foreground"},(_tel?.lastTtftMs||0)+" ms")),A.createElement("div",{className:"flex justify-between"},A.createElement("span",{className:"text-muted-foreground"},"Session"),A.createElement("span",{className:"font-mono font-medium text-foreground"},Xpc((_tel?.totalPromptTokens||0)+(_tel?.totalCompletionTokens||0)))),A.createElement("div",{className:"flex justify-between"},A.createElement("span",{className:"text-muted-foreground"},"Cost"),A.createElement("span",{className:"font-mono font-medium text-foreground"},"$"+Number(_tel?.totalCostUsd||0).toFixed(4)))),b&&'
-                )
-
-                // 3. Always show expandable Thinking / Thought Process blocks by default
-                .replaceAll(
-                    'case "verboseConversationSteps":return a.rootProvider.getState().userConfig?.userSettings?.verboseConversationSteps??!1',
-                    'case "verboseConversationSteps":return a.rootProvider.getState().userConfig?.userSettings?.verboseConversationSteps??!0'
-                )
-                .replaceAll(
-                    'verboseAgentChat:h}=vC(),k=h??!1',
-                    'verboseAgentChat:h}=vC(),k=h??!0'
-                )
-                .replaceAll(
-                    'vC().verboseAgentChat??!1',
-                    'vC().verboseAgentChat??!0'
-                )
-
-                // 4. Full Rich 3D Marketplace + Classic Plugins + One-Click Install/Uninstall
-                .replaceAll(
-                    'b.getCascadeNuxes({})',
-                    'Promise.resolve({nuxes:[]})'
-                )
-                .replaceAll(
-                    'v.getAvailableCascadePlugins($b(wha,t))',
-                    'Promise.resolve({plugins:[]})'
-                )
-                .replaceAll(
-                    'searchMarketplace:async t=>\nf(v=>v.searchMarketplace($b(mia,{query:t.query??"",groupId:t.groupId??"",pageToken:t.pageToken??""})))',
-                    `searchMarketplace:async t=>fetch("${gwBase}/__agy_plugins/marketplace_search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:t.query??"",groupId:t.groupId??"",pageToken:t.pageToken??""})}).then(r=>r.json())`
-                )
-                .replaceAll(
-                    'getMarketplaceFeatured:async()=>f(t=>t.getMarketplaceFeatured($b(nia,{})))',
-                    `getMarketplaceFeatured:async()=>fetch("${gwBase}/__agy_plugins/marketplace_featured").then(r=>r.json())`
-                )
-                .replaceAll(
-                    'getMarketplaceCustomization:async t=>f(v=>v.getMarketplaceCustomization($b(oia,{id:t.id,includePreview:t.includePreview??!1})))',
-                    `getMarketplaceCustomization:async t=>fetch("${gwBase}/__agy_plugins/marketplace_item",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:t.id})}).then(async r=>{const j=await r.json();if(!r.ok)throw new Error(j.error||"Not found");return j})`
-                )
-                .replaceAll(
-                    'installCustomization:async t=>f(v=>v.installCustomization($b(pia,{id:t.id,bundleId:t.bundleId})))',
-                    `installCustomization:async t=>fetch("${gwBase}/__agy_plugins/install",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:t.id})}).then(async r=>{const j=await r.json();if(!r.ok||!j.success)throw new Error(j.message||"Install failed");return j})`
-                )
-                .replace(
-                    'function oS(a,b){return b.find(c=>Pwb(c.installedFrom,a))}',
-                    'function oS(a,b){return b.find(c=>Pwb(c.installedFrom,a)||nS(c)===a?.id)}'
-                )
-                .replaceAll(
-                    'getBuildWithGooglePlugins:async()=>f(t=>t.getBuildWithGooglePlugins($b(Zha,{})))',
-                    `getBuildWithGooglePlugins:async()=>fetch("${gwBase}/__agy_plugins/list").then(r=>r.json())`
-                )
-                .replaceAll(
-                    'downloadBuildWithGooglePlugin:async t=>f(async v=>{var w=$b($ha);w.pluginId=t.uid;return v.downloadBuildWithGooglePlugin(w)})',
-                    `downloadBuildWithGooglePlugin:async t=>fetch("${gwBase}/__agy_plugins/install",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({uid:t.uid})}).then(async r=>{const j=await r.json();if(!r.ok||!j.success)throw new Error(j.message||"Plugin install failed");return j})`
-                )
-                .replaceAll(
-                    'deletePlugin:async t=>f(async v=>{var w=$b(aia);w.pluginId=t.pluginId;return v.deletePlugin(w)})',
-                    `deletePlugin:async t=>{await f(async v=>{var w=$b(aia);w.pluginId=t.pluginId;return v.deletePlugin(w)}).catch(()=>({}));await fetch("${gwBase}/__agy_plugins/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pluginId:t.pluginId})}).catch(()=>null);return {}}`
-                )
-                .replace(
-                    'h(C.plugins);let F=new Set;',
-                    'h(C.plugins);let F=new Set(C.installedUids||[]);'
-                )
-                .replace(
-                    '(G.path.endsWith(J)||G.path.endsWith(J+"/"))&&F.add(I)',
-                    '(String(G.path||"").replace(/\\\\/g,"/").endsWith(J)||String(G.path||"").replace(/\\\\/g,"/").endsWith(J+"/"))&&F.add(I)'
-                )
-
-                // 4b. Inject Sleek 'Install from GitHub' Pill Button + Centered Backdrop Modal inside Customizations Header (Fyc)
-                .replace(
-                    'function Fyc({tab:a,onSelect:b}){return A.createElement("nav",{"aria-label":"Customizations views",className:"agy-pill inline-flex items-center h-8 rounded-lg border border-border bg-secondary/20 p-0.5 gap-0.5 select-none","data-testid":"plugins-tabs"},Eyc.map(({tab:c,to:d,label:f})=>{var g=c===a;return A.createElement(WF,{key:c,to:d,activeOptions:{exact:!0},"aria-current":g?"page":void 0,onClick:()=>{g||b(c)},className:dj("agy-pill inline-flex items-center justify-center h-full px-2 rounded-md text-sm shrink-0 whitespace-nowrap no-underline transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-primary",\ng?"bg-secondary text-foreground":"text-secondary-foreground hover:text-foreground"),"data-testid":`plugins-tab-${c}`},f)}))}',
-                    `function Fyc({tab:a,onSelect:b}){var [ghOpen,setGhOpen]=(0,A.useState)(!1),[ghUrl,setGhUrl]=(0,A.useState)(""),[ghBusy,setGhBusy]=(0,A.useState)(!1),[ghMsg,setGhMsg]=(0,A.useState)(null),inputRef=(0,A.useRef)(null);(0,A.useEffect)(()=>{if(!ghOpen)return;setTimeout(()=>{inputRef.current?.focus()},30);var onKey=ev=>{if(ev.key==="Escape"&&!ghBusy){setGhOpen(!1);setGhMsg(null)}};window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey)},[ghOpen,ghBusy]);var doGhInstall=async()=>{if(!ghUrl.trim()||ghBusy)return;setGhBusy(!0);setGhMsg(null);try{var r=await fetch("${gwBase}/__agy_plugins/install_github",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:ghUrl.trim()})}),j=await r.json();if(!r.ok||!j.success)throw new Error(j.message||"Install failed");setGhMsg({ok:!0,text:j.message||"Installed successfully!"});setGhUrl("");window.dispatchEvent(new Event("focus"));setTimeout(()=>{setGhOpen(!1);setGhMsg(null);b("installed");window.location.hash="#/customizations/installed"},800)}catch(err){setGhMsg({ok:!1,text:err.message})}finally{setGhBusy(!1)}};var ghIcon=A.createElement("svg",{viewBox:"0 0 16 16",width:14,height:14,fill:"currentColor","aria-hidden":"true",className:"shrink-0"},A.createElement("path",{d:"M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"}));return A.createElement(A.Fragment,null,A.createElement("div",{className:"inline-flex items-center gap-2"},A.createElement("button",{type:"button","data-testid":"install-from-github-btn",onClick:()=>{setGhOpen(!0);setGhMsg(null)},className:"agy-pill inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-lg border border-border bg-secondary/30 hover:bg-secondary text-xs font-medium text-foreground shrink-0 whitespace-nowrap transition-colors cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-primary"},ghIcon,A.createElement("span",null,"Install from GitHub")),A.createElement("nav",{"aria-label":"Customizations views",className:"agy-pill inline-flex items-center h-8 rounded-lg border border-border bg-secondary/20 p-0.5 gap-0.5 select-none","data-testid":"plugins-tabs"},Eyc.map(({tab:c,to:d,label:f})=>{var g=c===a;return A.createElement(WF,{key:c,to:d,activeOptions:{exact:!0},"aria-current":g?"page":void 0,onClick:()=>{g||b(c)},className:dj("agy-pill inline-flex items-center justify-center h-full px-2 rounded-md text-sm shrink-0 whitespace-nowrap no-underline transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-primary",g?"bg-secondary text-foreground":"text-secondary-foreground hover:text-foreground"),"data-testid":"plugins-tab-"+c},f)}))),ghOpen&&A.createElement("div",{"data-testid":"github-install-modal",onMouseDown:ev=>{if(ev.target===ev.currentTarget&&!ghBusy){setGhOpen(!1);setGhMsg(null)}},style:{position:"fixed",inset:0,zIndex:99999,backgroundColor:"rgba(0,0,0,0.62)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}},A.createElement("div",{className:"w-full max-w-md rounded-2xl border border-border bg-background text-foreground shadow-2xl p-5 flex flex-col gap-4",onMouseDown:ev=>ev.stopPropagation()},A.createElement("div",{className:"flex items-start justify-between gap-3"},A.createElement("div",{className:"flex items-center gap-2.5"},A.createElement("div",{className:"w-8 h-8 rounded-lg bg-secondary flex items-center justify-center text-foreground shrink-0"},ghIcon),A.createElement("div",{className:"flex flex-col"},A.createElement("h2",{className:"text-sm font-semibold text-foreground m-0"},"Install from GitHub"),A.createElement("span",{className:"text-xs text-muted-foreground"},"Install any plugin, SKILL.md, rules, or MCP server repo"))),A.createElement("button",{type:"button",disabled:ghBusy,onClick:()=>{setGhOpen(!1);setGhMsg(null)},className:"p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary bg-transparent border-none cursor-pointer"},A.createElement(lt,{name:"close",size:16}))),A.createElement("div",{className:"flex flex-col gap-2"},A.createElement("label",{className:"text-xs font-medium text-foreground"},"Repository URL or owner/repo"),A.createElement("input",{ref:inputRef,type:"text",placeholder:"https://github.com/owner/repo",value:ghUrl,disabled:ghBusy,onChange:e=>setGhUrl(e.target.value),onKeyDown:e=>{if(e.key==="Enter")doGhInstall()},className:"w-full h-9 px-3 rounded-lg !bg-muted/60 !border !border-border text-xs font-mono text-foreground outline-none focus:!ring-1 focus:!ring-primary"}),A.createElement("div",{className:"text-[11px] text-muted-foreground leading-relaxed"},"Supports full repo URLs, ",A.createElement("code",{className:"px-1 py-0.5 rounded bg-muted font-mono"},"owner/repo"),", subfolder URLs (",A.createElement("code",{className:"px-1 py-0.5 rounded bg-muted font-mono"},".../tree/main/skills/my-skill"),"), or direct ",A.createElement("code",{className:"px-1 py-0.5 rounded bg-muted font-mono"},".zip")," links.")),ghMsg&&A.createElement("div",{className:"px-3 py-2 rounded-lg border text-xs "+(ghMsg.ok?"bg-emerald-500/10 border-emerald-500/30 text-emerald-400":"bg-red-500/10 border-red-500/30 text-red-400")},ghMsg.text),A.createElement("div",{className:"flex items-center justify-end gap-2 pt-1"},A.createElement(aB,{variant:"secondary",size:"sm",disabled:ghBusy,onClick:()=>{setGhOpen(!1);setGhMsg(null)}},"Cancel"),A.createElement(aB,{variant:"primary",size:"sm",disabled:ghBusy||!ghUrl.trim(),onClick:doGhInstall},ghBusy?"Downloading & Installing...":"Install Plugin")))))}`
-                )
-
-                // 5. Enable Model Usage / Quota in BOTH Model Selector ('View Usage' submenu) & Context Popover
-                .replaceAll(
-                    'hk().get("inputComponent")?.showModelUsage===!0',
-                    '!0'
-                )
-                .replace(
-                    'A.createElement(VS,{key:n.displayName||p},n.displayName&&A.createElement(WS,{className:"!pt-1 !pb-0 !text-foreground"},n.displayName),',
-                    'A.createElement("div",{key:n.displayName||p,className:"flex flex-col gap-0.5"},n.displayName&&A.createElement("div",{className:"px-2 pt-1.5 pb-0.5 text-xs font-medium text-foreground"},n.displayName),'
-                )
-
-                // 6. Bidirectional RTL / Persian + English Markdown & Input Fix
-                .replace(
-                    'function gUb(a){var b=[];a.forEach((c,d)=>{if(typeof c!=="string")b.push({key:`node-${d}`,content:c});else{var f=c.split(" ");f.forEach((g,h)=>{var k=h===f.length-1;!g&&k||b.push({key:`${d}-${h}`,content:k?g:`${g} `})})}});return b}',
-                    'function gUb(a){var _hasRtl=a.some(x=>typeof x==="string"&&/[\\u0590-\\u08FF\\uFB1D-\\uFDFF\\uFE70-\\uFEFF]/.test(x)),b=[];a.forEach((c,d)=>{if(typeof c!=="string"||_hasRtl)b.push({key:`node-${d}`,content:c});else{var f=c.split(" ");f.forEach((g,h)=>{var k=h===f.length-1;!g&&k||b.push({key:`${d}-${h}`,content:k?g:`${g} `})})}});return b}'
-                )
-                .replace(
-                    'var RD=({value:a,className:b,...c})=>A.createElement("code",{...c,className:dj("whitespace-pre-wrap",b),style:{wordBreak:"break-word"}},a);',
-                    'var RD=({value:a,className:b,...c})=>A.createElement("code",{...c,dir:"ltr",className:dj("whitespace-pre-wrap",b),style:{wordBreak:"break-word",unicodeBidi:"isolate",direction:"ltr"}},a);'
-                )
-                .replace(
-                    'pre:({node:a,\n...b})=>{a=c_();return A.createElement("pre",{...b,style:{...b.style,...a}})}',
-                    'pre:({node:a,\n...b})=>{a=c_();return A.createElement("pre",{...b,dir:"ltr",style:{direction:"ltr",textAlign:"left",...b.style,...a}})}'
-                )
-                .replace(
-                    'p:({node:a,...b})=>{var {animate:c,claimStaggerDelays:d}=$Z();return A.createElement("p",{...b,className:dj(b.className)},A.createElement(hUb,\n{animate:c,paragraphs:A.Children.toArray(b.children),claimStaggerDelays:d}))}',
-                    'p:({node:a,...b})=>{var {animate:c,claimStaggerDelays:d}=$Z();return A.createElement("p",{dir:"auto",...b,className:dj(b.className)},A.createElement(hUb,\n{animate:c,paragraphs:A.Children.toArray(b.children),claimStaggerDelays:d}))}'
-                )
-                .replace(
-                    'const b_=a=>{var b=({node:c,...d})=>{var {animate:f,claimStaggerDelays:g}=$Z();return A.createElement(a,{...d,className:dj(d.className)},A.createElement(hUb,{animate:f,paragraphs:A.Children.toArray(d.children),claimStaggerDelays:g}))}',
-                    'const b_=a=>{var b=({node:c,...d})=>{var {animate:f,claimStaggerDelays:g}=$Z();return A.createElement(a,{dir:"auto",...d,className:dj(d.className)},A.createElement(hUb,{animate:f,paragraphs:A.Children.toArray(d.children),claimStaggerDelays:g}))}'
-                )
-                .replace(
-                    'if(h)return A.createElement("li",{...f,style:{...f.style,...a},className:dj(f.className,"task-list-item")}',
-                    'if(h)return A.createElement("li",{dir:"auto",...f,style:{...f.style,...a},className:dj(f.className,"task-list-item")}'
-                )
-                .replace(
-                    'if(k){let {checkbox:m,inlineContent:n,sublists:p}=lVb(g);return A.createElement("li",{...f,style:{...f.style,\n...a},className:dj(f.className,"task-checked")}',
-                    'if(k){let {checkbox:m,inlineContent:n,sublists:p}=lVb(g);return A.createElement("li",{dir:"auto",...f,style:{...f.style,\n...a},className:dj(f.className,"task-checked")}'
-                )
-                .replace(
-                    'return A.createElement("li",{...f,style:{...f.style,...a},className:f.className},d(g))',
-                    'return A.createElement("li",{dir:"auto",...f,style:{...f.style,...a},className:f.className},d(g))'
-                )
-                .replace(
-                    'blockquote:({node:a,...b})=>{a=c_();return b.className?.includes("markdown-alert")?A.createElement("blockquote",{...b,style:{...b.style,...a}}):A.createElement("blockquote",{...b,className:dj("relative my-2 pl-4 before:absolute before:inset-y-0 before:left-0 before:w-1 before:rounded-full before:bg-border",b.className),style:{...b.style,...a}})}',
-                    'blockquote:({node:a,...b})=>{a=c_();return b.className?.includes("markdown-alert")?A.createElement("blockquote",{dir:"auto",...b,style:{...b.style,...a}}):A.createElement("blockquote",{dir:"auto",...b,className:dj("relative my-2 pl-4 before:absolute before:inset-y-0 before:left-0 before:w-1 before:rounded-full before:bg-border",b.className),style:{...b.style,...a}})}'
-                )
-                .replace(
-                    'th:({node:a,style:b,...c})=>A.createElement("th",{...c,style:lZb(b)',
-                    'th:({node:a,style:b,...c})=>A.createElement("th",{dir:"auto",...c,style:lZb(b)'
-                )
-                .replace(
-                    'td:({node:a,style:b,...c})=>A.createElement("td",{...c,style:lZb(b)',
-                    'td:({node:a,style:b,...c})=>A.createElement("td",{dir:"auto",...c,style:lZb(b)'
-                );
+            let txt = patchUiMainBundleSource(Buffer.concat(chunks).toString("utf8"), gwBase);
 
             // Dynamic runtime toast + real-time EventSource telemetry stream + UI i18n MutationObserver + escape button + RTL/Bidi CSS
             txt += `\n;(function(){if(typeof window==="undefined")return;var _bootObs=function(){if(!document.body){setTimeout(_bootObs,80);return}try{if(window.__agyApplyDomLocalization&&window.__agyGetUiLanguage&&window.__agyGetUiLanguage()!=="en")window.__agyApplyDomLocalization(document.body);var mo=new MutationObserver(function(){if(window.__agyGetUiLanguage&&window.__agyGetUiLanguage()!=="en"&&window.__agyScheduleDomLocalization)window.__agyScheduleDomLocalization()});mo.observe(document.body,{childList:!0,subtree:!0,characterData:!0})}catch{}};_bootObs();try{var es=new EventSource("${gwBase}/__agy_telemetry_stream");es.onmessage=function(ev){try{var d=JSON.parse(ev.data);if(d&&typeof _agyEmitTel==="function")_agyEmitTel(d)}catch{}}}catch{}window.__agyShowToast=function(msg){try{var t=document.createElement("div");t.textContent=msg;t.style.cssText="position:fixed;top:44px;right:18px;z-index:999999;padding:8px 14px;border-radius:10px;font-size:12px;font-weight:500;background:#18181b;color:#fafafa;border:1px solid #3f3f46;box-shadow:0 8px 24px rgba(0,0,0,0.45);transition:opacity 0.3s ease;";document.body.appendChild(t);setTimeout(function(){t.style.opacity="0";setTimeout(function(){t.remove()},350)},3800)}catch{}};if(!document.getElementById("__agy_rtl_bidi_fix")){var st=document.createElement("style");st.id="__agy_rtl_bidi_fix";st.textContent='p[dir="auto"],li[dir="auto"],h1[dir="auto"],h2[dir="auto"],h3[dir="auto"],h4[dir="auto"],h5[dir="auto"],h6[dir="auto"],blockquote[dir="auto"]{text-align:start;}ul:has(>li:dir(rtl)),ol:has(>li:dir(rtl)){direction:rtl;padding-left:0!important;padding-right:1.25rem!important;}blockquote:dir(rtl){padding-left:0!important;padding-right:1rem!important;}blockquote:dir(rtl)::before{left:auto!important;right:0!important;}[contenteditable="true"],[data-lexical-editor] p,textarea:not(.font-mono){unicode-bidi:plaintext;text-align:start;}code:not(pre code){unicode-bidi:isolate;direction:ltr;}html[data-agy-lang="fa"] body,html[data-agy-lang="ar"] body{font-family:"Vazirmatn","Segoe UI",Tahoma,system-ui,sans-serif;}[data-agy-bidi="rtl"]{direction:rtl;unicode-bidi:isolate;text-align:left;}[data-agy-bidi="rtl"] code,[data-agy-bidi="rtl"] kbd{direction:ltr;unicode-bidi:isolate;display:inline-block;}';(document.head||document.documentElement).appendChild(st);}fetch("${gwBase}/__agy_auth/status").then(function(r){return r.json()}).then(function(j){if(j&&j.mode)window.__AGY_CURRENT_AUTH_MODE__=j.mode}).catch(function(){});setInterval(function(){try{var isOAuth=window.__AGY_CURRENT_AUTH_MODE__==="google_oauth";var bodyTxt=document.body?document.body.innerText:"";var isLoginScreen=isOAuth&&bodyTxt.includes("Sign in")&&!document.querySelector('[data-testid="settings-button"]');var existing=document.getElementById("__agy_back_to_apikey_btn");if(isLoginScreen&&!existing){var btn=document.createElement("button");btn.id="__agy_back_to_apikey_btn";btn.textContent="Switch to API Key Mode";btn.style.cssText="position:fixed;top:40px;right:18px;z-index:999999;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;background:#27272a;color:#fafafa;border:1px solid #3f3f46;box-shadow:0 4px 12px rgba(0,0,0,0.4);-webkit-app-region:no-drag;";btn.onclick=function(){btn.textContent="Switching...";fetch("${gwBase}/__agy_auth/switch_mode",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"apikey"})}).then(function(){window.__AGY_CURRENT_AUTH_MODE__="apikey";if(window.__agyCore&&window.__agyCore.authService)window.__agyCore.authService.checkCurrentAuthStatus();existing&&existing.remove();});};document.body.appendChild(btn);}else if(!isLoginScreen&&existing){existing.remove();}}catch(e){}},600);})();`;

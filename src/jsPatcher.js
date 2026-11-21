@@ -152,7 +152,13 @@ function patchLanguageServerJs(distDir) {
     }
 
     // 2. Cache login-shell env so LS hot-swaps finish in ~300ms instead of re-spawning login shell
-    if (!src.includes("cachedResolvedShellEnv")) {
+    if (src.includes("new loginShellEnvReads_1.LoginShellEnvReads(false)")) {
+        src = src.replace(
+            "new loginShellEnvReads_1.LoginShellEnvReads(false)",
+            "new loginShellEnvReads_1.LoginShellEnvReads(true)"
+        );
+        changed = true;
+    } else if (!src.includes("cachedResolvedShellEnv")) {
         const nextShell = src.replace(
             /let\s+prefetchedShellEnv;[\s\S]*?function\s+takeShellEnv\s*\(\)\s*\{[\s\S]*?\n\}/,
             [
@@ -183,19 +189,20 @@ function patchLanguageServerJs(distDir) {
     }
 
     // 3. Parallel gateway boot + pre-spawn auth environment sync inside startLanguageServer
+    // Supports v2.29 (takeShellEnv()) and v2.32+ (shellEnvReads.take())
     if (!src.includes("ensureGatewayForwarder")) {
         const nextStart = src.replace(
-            /const\s+loginShellEnv\s*=\s*await\s+takeShellEnv\(\);/,
+            /const\s+loginShellEnv\s*=\s*await\s+([A-Za-z0-9_$.]+\(\));/,
             [
                 "const [loginShellEnv, gw] = await Promise.all([",
-                "        takeShellEnv(),",
+                "        $1,",
                 "        (0, gatewayForwarder_1.ensureGatewayForwarder)()",
                 "    ]);",
                 "    await (0, gatewayForwarder_1.prepareAuthEnvironmentBeforeSpawn)(gw.port);"
             ].join("\n")
         );
         if (nextStart === src) {
-            throw new Error("Could not anchor takeShellEnv() in dist/languageServer.js");
+            throw new Error("Could not anchor loginShellEnv await in dist/languageServer.js");
         }
         src = nextStart;
         changed = true;
@@ -211,45 +218,74 @@ function patchLanguageServerJs(distDir) {
     }
 
     // 4. Dynamic OAuth slot app_data_dir + API Key vs Google OAuth CLI flags
+    // Supports both v2.32+ (`lsDefaults_1.baseLsArgs({...})`) and v2.29 inline `'--standalone'` array
     if (!src.includes("effectiveAppDataDir")) {
-        const nextArgs = src.replace(
-            /const\s+args\s*=\s*\[\s*'--standalone',[\s\S]*?'--enable_sidecars',\s*\];/,
-            [
-                "const authMode = (0, gatewayForwarder_1.getCurrentAuthMode)();",
-                "        const effectiveAppDataDir = authMode === 'google_oauth'",
-                "            ? (0, gatewayForwarder_1.getActiveOAuthAppDataDir)((0, paths_1.getAppDataDirName)())",
-                "            : (0, paths_1.getAppDataDirName)();",
-                "        const args = [",
-                "            '--standalone',",
-                "            '--override_ide_name',",
-                "            'antigravity',",
-                "            '--subclient_type',",
-                "            'hub',",
-                "            '--override_ide_version',",
-                "            electron_1.app.getVersion(),",
-                "            '--override_user_agent_name',",
-                "            'antigravity',",
-                "            '--https_server_port',",
-                "            String(port),",
-                "            '--csrf_token',",
-                "            csrf,",
-                "            '--app_data_dir',",
-                "            effectiveAppDataDir,",
-                "        ];",
-                "        if (authMode === 'apikey') {",
-                "            args.push('--api_server_url', 'https://generativelanguage.googleapis.com');",
-                "        }",
-                "        else {",
-                "            args.push(",
-                "                '--api_server_url',",
-                "                'https://generativelanguage.googleapis.com',",
-                "                '--cloud_code_endpoint',",
-                "                'https://daily-cloudcode-pa.googleapis.com'",
-                "            );",
-                "        }",
-                "        args.push('--enable_sidecars');"
-            ].join("\n")
+        let nextArgs = src.replace(
+            /const\s+args\s*=\s*\[\s*\.\.\.\(0,\s*lsDefaults_1\.baseLsArgs\)\(\{([\s\S]*?)\}\),\s*'--enable_sidecars',\s*\];/,
+            (_full, innerProps) => {
+                const updatedProps = innerProps.replace(
+                    /appDataDir:\s*\(0,\s*paths_1\.getAppDataDirName\)\(\)/,
+                    "appDataDir: effectiveAppDataDir"
+                );
+                return [
+                    "const authMode = (0, gatewayForwarder_1.getCurrentAuthMode)();",
+                    "        const effectiveAppDataDir = authMode === 'google_oauth'",
+                    "            ? (0, gatewayForwarder_1.getActiveOAuthAppDataDir)((0, paths_1.getAppDataDirName)())",
+                    "            : (0, paths_1.getAppDataDirName)();",
+                    "        const baseArgs = (0, lsDefaults_1.baseLsArgs)({" + updatedProps + "});",
+                    "        if (authMode === 'apikey') {",
+                    "            const ccIdx = baseArgs.indexOf('--cloud_code_endpoint');",
+                    "            if (ccIdx !== -1) baseArgs.splice(ccIdx, 2);",
+                    "        }",
+                    "        const args = [",
+                    "            ...baseArgs,",
+                    "            '--enable_sidecars',",
+                    "        ];"
+                ].join("\n");
+            }
         );
+
+        if (nextArgs === src) {
+            nextArgs = src.replace(
+                /const\s+args\s*=\s*\[\s*'--standalone',[\s\S]*?'--enable_sidecars',\s*\];/,
+                [
+                    "const authMode = (0, gatewayForwarder_1.getCurrentAuthMode)();",
+                    "        const effectiveAppDataDir = authMode === 'google_oauth'",
+                    "            ? (0, gatewayForwarder_1.getActiveOAuthAppDataDir)((0, paths_1.getAppDataDirName)())",
+                    "            : (0, paths_1.getAppDataDirName)();",
+                    "        const args = [",
+                    "            '--standalone',",
+                    "            '--override_ide_name',",
+                    "            'antigravity',",
+                    "            '--subclient_type',",
+                    "            'hub',",
+                    "            '--override_ide_version',",
+                    "            electron_1.app.getVersion(),",
+                    "            '--override_user_agent_name',",
+                    "            'antigravity',",
+                    "            '--https_server_port',",
+                    "            String(port),",
+                    "            '--csrf_token',",
+                    "            csrf,",
+                    "            '--app_data_dir',",
+                    "            effectiveAppDataDir,",
+                    "        ];",
+                    "        if (authMode === 'apikey') {",
+                    "            args.push('--api_server_url', 'https://generativelanguage.googleapis.com');",
+                    "        }",
+                    "        else {",
+                    "            args.push(",
+                    "                '--api_server_url',",
+                    "                'https://generativelanguage.googleapis.com',",
+                    "                '--cloud_code_endpoint',",
+                    "                'https://daily-cloudcode-pa.googleapis.com'",
+                    "            );",
+                    "        }",
+                    "        args.push('--enable_sidecars');"
+                ].join("\n")
+            );
+        }
+
         if (nextArgs === src) {
             throw new Error("Could not anchor LS CLI args array in dist/languageServer.js");
         }

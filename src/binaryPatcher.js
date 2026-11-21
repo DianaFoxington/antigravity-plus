@@ -184,6 +184,40 @@ function detectBinaryArch(buf) {
     return process.arch === "arm64" ? "arm64" : "x64";
 }
 
+function sleepSync(ms) {
+    try {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    } catch {
+        const end = Date.now() + ms;
+        while (Date.now() < end) {}
+    }
+}
+
+function safeReplaceFileSync(srcPath, destPath) {
+    let lastErr = null;
+    for (let attempt = 0; attempt < 8; attempt++) {
+        try {
+            fs.renameSync(srcPath, destPath);
+            return;
+        } catch (err) {
+            lastErr = err;
+            if (err && (err.code === "EPERM" || err.code === "EBUSY" || err.code === "EACCES")) {
+                sleepSync(150 * (attempt + 1));
+                continue;
+            }
+            throw err;
+        }
+    }
+    // Final fallback on Windows when AV briefly holds rename lock on .patching file
+    try {
+        fs.copyFileSync(srcPath, destPath);
+        try { fs.unlinkSync(srcPath); } catch {}
+        return;
+    } catch {
+        throw lastErr;
+    }
+}
+
 function resignMacOsBinaryIfNeeded(binaryPath) {
     if (process.platform !== "darwin") return false;
     try {
@@ -298,7 +332,7 @@ function patchLanguageServerBinary(lsBinaryPath, lsBakPath) {
                 fs.chmodSync(tmpPath, 0o755);
             }
         } catch {}
-        fs.renameSync(tmpPath, lsBinaryPath);
+        safeReplaceFileSync(tmpPath, lsBinaryPath);
         const signed = resignMacOsBinaryIfNeeded(lsBinaryPath);
         return { status: "patched", arch, codesigned: signed, appliedRules };
     }
@@ -308,5 +342,7 @@ function patchLanguageServerBinary(lsBinaryPath, lsBakPath) {
 
 module.exports = {
     inspectLanguageServerBinary,
-    patchLanguageServerBinary
+    patchLanguageServerBinary,
+    safeReplaceFileSync,
+    sleepSync
 };
