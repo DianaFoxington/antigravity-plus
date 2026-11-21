@@ -1349,6 +1349,44 @@ function sanitizeGatewayModelBaseId(providerId, rawModelKey, protocol) {
     return `${cleanProv}__${cleanModel}`;
 }
 
+function isKeylessLocalEndpoint(providerId, protocol, baseURL) {
+    if (protocol !== "openai-compatible") return false;
+    const pid = String(providerId || "").toLowerCase();
+    if (pid === "ollama" || pid === "lmstudio" || pid === "vllm" || pid === "llamacpp") return true;
+    try {
+        const h = new URL(String(baseURL || "")).hostname.toLowerCase();
+        return (
+            h === "localhost" ||
+            h === "127.0.0.1" ||
+            h === "::1" ||
+            h === "[::1]" ||
+            h.endsWith(".local") ||
+            /^10\.\d+\.\d+\.\d+$/.test(h) ||
+            /^192\.168\.\d+\.\d+$/.test(h) ||
+            /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(h)
+        );
+    } catch {
+        return false;
+    }
+}
+
+function buildOpenAiEndpointUrl(rawBaseUrl, endpointSubPath, isAzure = false) {
+    const u = new URL(String(rawBaseUrl || "").trim());
+    let p = u.pathname.replace(/\/+$/, "");
+    const cleanSub = endpointSubPath.replace(/^\/+/, "");
+    if (!p.toLowerCase().endsWith("/" + cleanSub.toLowerCase())) {
+        // Strip trailing /chat/completions if caller is asking for /models
+        if (cleanSub === "models" && /\/chat\/completions$/i.test(p)) {
+            p = p.replace(/\/chat\/completions$/i, "");
+        }
+        u.pathname = `${p}/${cleanSub}`;
+    }
+    if (isAzure && !u.searchParams.has("api-version")) {
+        u.searchParams.set("api-version", "2024-12-01-preview");
+    }
+    return u;
+}
+
 function normalizeAccountsList(optionsObj) {
     if (!optionsObj || typeof optionsObj !== "object") return [];
     const accounts = [];
@@ -1437,11 +1475,14 @@ async function buildDynamicAdminSettings(gwPort) {
         if (!provCfg || typeof provCfg !== "object") continue;
         const provName = String(provCfg.name || provId).trim();
         const protocol = detectProviderProtocol(provId, provCfg);
-        const apiKeys = extractApiKeysFromOptions(provCfg.options);
         const baseURL = String(
             provCfg.options?.baseURL ||
             (protocol === "google-genai" ? "https://generativelanguage.googleapis.com/v1beta" : "https://api.openai.com/v1")
         ).trim().replace(/\/+$/, "");
+        let apiKeys = extractApiKeysFromOptions(provCfg.options);
+        if (apiKeys.length === 0 && isKeylessLocalEndpoint(provId, protocol, baseURL)) {
+            apiKeys = ["local-no-key"];
+        }
         const customHeaders = (provCfg.options?.headers && typeof provCfg.options.headers === "object")
             ? provCfg.options.headers
             : {};
@@ -1566,7 +1607,12 @@ async function syncAdminSettingsFiles(gwPort, forceWrite = false) {
     let wroteAny = false;
     for (const p of getAdminSettingsTargetPaths()) {
         try {
-            fs.mkdirSync(path.dirname(p), { recursive: true });
+            const dir = path.dirname(p);
+            const dirExisted = fs.existsSync(dir);
+            fs.mkdirSync(dir, { recursive: true });
+            if (!dirExisted && process.platform === "win32" && dir.toLowerCase().includes("programdata")) {
+                try { execFileSync("icacls", [dir, "/grant", "*S-1-5-32-545:(OI)(CI)F", "/Q"], { stdio: "ignore" }); } catch {}
+            }
             fs.writeFileSync(p, raw);
             wroteAny = true;
         } catch {
@@ -1784,6 +1830,9 @@ function convertGenAiRequestToOpenAi(rawGenAiBody, route, isStreaming) {
     if (isStreaming && !/mistral|perplexity|cohere/i.test(provSig)) {
         openAiPayload.stream_options = { include_usage: true };
     }
+    if (route.supportsThinking && /openrouter\.ai/.test(provSig)) {
+        openAiPayload.include_reasoning = true;
+    }
 
     // 3. Tools
     const openAiTools = [];
@@ -1826,7 +1875,10 @@ function convertGenAiRequestToOpenAi(rawGenAiBody, route, isStreaming) {
 }
 
 function forwardToOpenAiCompatibleProvider(req, res, route, genAiBody, isStreaming, keyIdx = 0, orderedKeys = null) {
-    const keysList = orderedKeys || getOrderedApiKeysForModel(route.providerId, route.apiKeys, route.upstreamModelId);
+    const fallbackKeys = route.apiKeys.length > 0
+        ? route.apiKeys
+        : (isKeylessLocalEndpoint(route.providerId, route.protocol, route.baseURL) ? ["local-no-key"] : []);
+    const keysList = orderedKeys || getOrderedApiKeysForModel(route.providerId, fallbackKeys, route.upstreamModelId);
     if (!keysList.length) {
         res.writeHead(401, { "Content-Type": "application/json" });
         return res.end(JSON.stringify({
@@ -1845,8 +1897,7 @@ function forwardToOpenAiCompatibleProvider(req, res, route, genAiBody, isStreami
 
     let targetUrl;
     try {
-        const base = route.baseURL.endsWith("/") ? route.baseURL : `${route.baseURL}/`;
-        targetUrl = new URL("chat/completions", base);
+        targetUrl = buildOpenAiEndpointUrl(route.baseURL, "chat/completions", route.protocol === "azure-openai");
     } catch (err) {
         res.writeHead(400, { "Content-Type": "application/json" });
         return res.end(JSON.stringify({ error: { code: 400, message: `Invalid baseURL for ${route.providerName}: ${err.message}` } }));
@@ -1854,11 +1905,13 @@ function forwardToOpenAiCompatibleProvider(req, res, route, genAiBody, isStreami
 
     const isHttp = targetUrl.protocol === "http:";
     const isAzure = route.protocol === "azure-openai";
+    const isOpenRouter = targetUrl.hostname.toLowerCase().includes("openrouter.ai");
     const reqHeaders = {
         "Content-Type": "application/json",
         "Accept": isStreaming ? "text/event-stream" : "application/json",
-        ...(isAzure ? { "api-key": activeKey } : { "Authorization": `Bearer ${activeKey}` }),
-        "User-Agent": "antigravity/2.29.1",
+        ...(isAzure ? { "api-key": activeKey } : (activeKey && activeKey !== "local-no-key" ? { "Authorization": `Bearer ${activeKey}` } : {})),
+        ...(isOpenRouter ? { "HTTP-Referer": "https://antigravity.google", "X-Title": "Antigravity Plus" } : {}),
+        "User-Agent": "antigravity/2.32.1",
         ...route.headers,
         "Content-Length": outBuf.length
     };
@@ -2108,7 +2161,10 @@ function forwardToOpenAiCompatibleProvider(req, res, route, genAiBody, isStreami
                 if (!choice) continue;
                 const delta = choice.delta || {};
 
-                const reasoningDelta = delta.reasoning_content ?? delta.reasoning;
+                let reasoningDelta = delta.reasoning_content ?? delta.reasoning;
+                if (!reasoningDelta && Array.isArray(delta.reasoning_details)) {
+                    reasoningDelta = delta.reasoning_details.map(x => x?.text || x?.summary || "").join("");
+                }
                 if (typeof reasoningDelta === "string" && reasoningDelta.length > 0) {
                     complTok += Math.max(1, Math.round(reasoningDelta.length / 4));
                     emitGenAiSseParts([{ thought: true, text: reasoningDelta }]);
@@ -2571,7 +2627,8 @@ function forwardToAnthropicMessagesProvider(req, res, route, rawGenAiBody, isStr
 // ---------------------------------------------------------------------------
 async function testProviderEndpointLive(protocol, baseURL, apiKey, sampleModel) {
     const started = Date.now();
-    if (!apiKey) return { valid: false, latencyMs: 0, message: "API key is empty." };
+    const allowKeyless = isKeylessLocalEndpoint("", protocol, baseURL);
+    if (!apiKey && !allowKeyless) return { valid: false, latencyMs: 0, message: "API key is empty." };
 
     if (protocol === "google-genai") {
         return new Promise((resolve) => {
@@ -2605,16 +2662,15 @@ async function testProviderEndpointLive(protocol, baseURL, apiKey, sampleModel) 
     return new Promise((resolve) => {
         let u;
         try {
-            const defBase = protocol === "anthropic-messages" ? "https://api.anthropic.com/v1" : baseURL;
-            const b = defBase.endsWith("/") ? defBase : `${defBase}/`;
-            u = new URL("models", b);
+            const defBase = protocol === "anthropic-messages" ? (baseURL || "https://api.anthropic.com/v1") : baseURL;
+            u = buildOpenAiEndpointUrl(defBase, "models", protocol === "azure-openai");
         } catch (e) {
             return resolve({ valid: false, latencyMs: 0, message: `Invalid baseURL: ${e.message}` });
         }
         const isHttp = u.protocol === "http:";
         const authHeaders = protocol === "anthropic-messages"
             ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01" }
-            : (protocol === "azure-openai" ? { "api-key": apiKey } : { "Authorization": `Bearer ${apiKey}` });
+            : (protocol === "azure-openai" ? { "api-key": apiKey } : (apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}));
         const req = createProxiedRequest(!isHttp, {
             protocol: u.protocol,
             hostname: u.hostname,
@@ -2649,7 +2705,8 @@ async function testProviderEndpointLive(protocol, baseURL, apiKey, sampleModel) 
 }
 
 async function discoverProviderModelsLive(protocol, baseURL, apiKey) {
-    if (!apiKey) throw new Error("Enter an API key first to fetch models.");
+    const allowKeyless = isKeylessLocalEndpoint("", protocol, baseURL);
+    if (!apiKey && !allowKeyless) throw new Error("Enter an API key first to fetch models.");
     if (protocol === "google-genai") {
         return new Promise((resolve, reject) => {
             const req = createProxiedRequest(true, {
@@ -2691,15 +2748,14 @@ async function discoverProviderModelsLive(protocol, baseURL, apiKey) {
         let u;
         try {
             const defBase = protocol === "anthropic-messages" ? (baseURL || "https://api.anthropic.com/v1") : baseURL;
-            const b = defBase.endsWith("/") ? defBase : `${defBase}/`;
-            u = new URL("models", b);
+            u = buildOpenAiEndpointUrl(defBase, "models", protocol === "azure-openai");
         } catch (e) {
             return reject(new Error(`Invalid Base URL: ${e.message}`));
         }
         const isHttp = u.protocol === "http:";
         const authHeaders = protocol === "anthropic-messages"
             ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01" }
-            : (protocol === "azure-openai" ? { "api-key": apiKey } : { "Authorization": `Bearer ${apiKey}` });
+            : (protocol === "azure-openai" ? { "api-key": apiKey } : (apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}));
         const req = createProxiedRequest(!isHttp, {
             protocol: u.protocol,
             hostname: u.hostname,
@@ -2809,10 +2865,17 @@ async function handleAgyConfigRequest(urlPath, req, res, rawBodyBuf) {
         payload = JSON.parse(rawBodyBuf.toString("utf8") || "{}");
     } catch {}
 
+    const hotReloadLsIfApiKeyMode = async () => {
+        if (getCurrentAuthMode() === "apikey" && _lsHotRestartCallback) {
+            try { await _lsHotRestartCallback(); } catch {}
+        }
+    };
+
     if (urlPath === "/__agy_config/save" && req.method === "POST") {
         try {
             saveRawAgyConfigText(String(payload.rawText || ""));
             const synced = await syncAdminSettingsFiles(boundGatewayPort);
+            await hotReloadLsIfApiKeyMode();
             res.writeHead(200, corsHeaders);
             return res.end(JSON.stringify({
                 success: true,
@@ -2828,8 +2891,18 @@ async function handleAgyConfigRequest(urlPath, req, res, rawBodyBuf) {
     if (urlPath === "/__agy_config/discover_models" && req.method === "POST") {
         try {
             const npmStr = String(payload.npm || "").toLowerCase();
-            if (npmStr.includes("anthropic")) {
-                // Return curated Anthropic Claude catalog when using Anthropic protocol
+            const rawBase = String(payload.baseURL || "").trim();
+            const rawKey = String(payload.apiKey || "").trim();
+            if (npmStr.includes("anthropic") || rawBase.includes("api.anthropic.com")) {
+                if (rawKey) {
+                    try {
+                        const liveAnth = await discoverProviderModelsLive("anthropic-messages", rawBase || "https://api.anthropic.com/v1", rawKey);
+                        if (liveAnth.length > 0) {
+                            res.writeHead(200, corsHeaders);
+                            return res.end(JSON.stringify({ success: true, models: liveAnth }));
+                        }
+                    } catch {}
+                }
                 return res.writeHead(200, corsHeaders), res.end(JSON.stringify({
                     success: true,
                     models: [
@@ -2841,8 +2914,10 @@ async function handleAgyConfigRequest(urlPath, req, res, rawBodyBuf) {
                     ]
                 }));
             }
-            const proto = npmStr.includes("google") ? "google-genai" : "openai-compatible";
-            const list = await discoverProviderModelsLive(proto, String(payload.baseURL || "").trim(), String(payload.apiKey || "").trim());
+            const proto = npmStr.includes("google")
+                ? "google-genai"
+                : ((npmStr.includes("azure") || rawBase.includes(".openai.azure.com")) ? "azure-openai" : "openai-compatible");
+            const list = await discoverProviderModelsLive(proto, rawBase, rawKey);
             res.writeHead(200, corsHeaders);
             return res.end(JSON.stringify({ success: true, models: list }));
         } catch (err) {
@@ -2853,15 +2928,13 @@ async function handleAgyConfigRequest(urlPath, req, res, rawBodyBuf) {
 
     if (urlPath === "/__agy_config/test_draft" && req.method === "POST") {
         const npmStr = String(payload.npm || "").toLowerCase();
-        const proto = npmStr.includes("google") ? "google-genai" : "openai-compatible";
-        if (npmStr.includes("anthropic")) {
-            return res.writeHead(200, corsHeaders), res.end(JSON.stringify({
-                valid: !!String(payload.apiKey || "").trim(),
-                latencyMs: 1,
-                message: String(payload.apiKey || "").trim() ? "Anthropic configuration ready" : "API key is empty"
-            }));
-        }
-        const check = await testProviderEndpointLive(proto, String(payload.baseURL || "").trim(), String(payload.apiKey || "").trim(), "test");
+        const rawBase = String(payload.baseURL || "").trim();
+        const proto = (npmStr.includes("anthropic") || rawBase.includes("api.anthropic.com"))
+            ? "anthropic-messages"
+            : (npmStr.includes("google")
+                ? "google-genai"
+                : ((npmStr.includes("azure") || rawBase.includes(".openai.azure.com")) ? "azure-openai" : "openai-compatible"));
+        const check = await testProviderEndpointLive(proto, rawBase, String(payload.apiKey || "").trim(), "test");
         res.writeHead(200, corsHeaders);
         return res.end(JSON.stringify(check));
     }
@@ -2958,6 +3031,7 @@ async function handleAgyConfigRequest(urlPath, req, res, rawBodyBuf) {
 
             saveRawAgyConfigText(JSON.stringify(current, null, 2));
             const synced = await syncAdminSettingsFiles(boundGatewayPort);
+            await hotReloadLsIfApiKeyMode();
             res.writeHead(200, corsHeaders);
             return res.end(JSON.stringify({
                 success: true,
@@ -2981,6 +3055,7 @@ async function handleAgyConfigRequest(urlPath, req, res, rawBodyBuf) {
             current.provider[pid].models[mid] = buildRichModelEntry({ ...payload, id: mid });
             saveRawAgyConfigText(JSON.stringify(current, null, 2));
             const synced = await syncAdminSettingsFiles(boundGatewayPort);
+            await hotReloadLsIfApiKeyMode();
             res.writeHead(200, corsHeaders);
             return res.end(JSON.stringify({
                 success: true,
@@ -3003,6 +3078,7 @@ async function handleAgyConfigRequest(urlPath, req, res, rawBodyBuf) {
             }
             saveRawAgyConfigText(JSON.stringify(current, null, 2));
             const synced = await syncAdminSettingsFiles(boundGatewayPort);
+            await hotReloadLsIfApiKeyMode();
             res.writeHead(200, corsHeaders);
             return res.end(JSON.stringify({
                 success: true,
@@ -3113,9 +3189,6 @@ async function handleAgyConfigRequest(urlPath, req, res, rawBodyBuf) {
             return res.end(JSON.stringify({ valid: false, message: "Account not found." }));
         }
         const proto = detectProviderProtocol(pid, p);
-        if (proto === "anthropic-messages") {
-            return res.writeHead(200, corsHeaders), res.end(JSON.stringify({ valid: true, latencyMs: 1, message: "Anthropic API key ready" }));
-        }
         const sampleModel = Object.keys(p.models || {})[0] || "";
         const check = await testProviderEndpointLive(proto, p.options?.baseURL || "", target.apiKey, sampleModel);
         res.writeHead(200, corsHeaders);
@@ -3130,8 +3203,24 @@ async function handleAgyConfigRequest(urlPath, req, res, rawBodyBuf) {
             if (!current.provider?.[pid]) {
                 throw new Error(`Provider "${pid}" not found.`);
             }
-            current.provider[pid].options = current.provider[pid].options || {};
-            current.provider[pid].options.apiKey = newKey;
+            const accounts = normalizeAccountsList(current.provider[pid].options);
+            if (accounts.length > 0) {
+                const act = accounts.find(a => a.active) || accounts[0];
+                act.apiKey = newKey;
+                act.active = true;
+                syncProviderAccountsOptions(current.provider[pid], accounts);
+            } else if (newKey) {
+                syncProviderAccountsOptions(current.provider[pid], [{
+                    id: crypto.randomUUID(),
+                    name: "Account 1",
+                    apiKey: newKey,
+                    active: true,
+                    enabled: true
+                }]);
+            } else {
+                current.provider[pid].options = current.provider[pid].options || {};
+                current.provider[pid].options.apiKey = "";
+            }
             saveRawAgyConfigText(JSON.stringify(current, null, 2));
             await syncAdminSettingsFiles(boundGatewayPort);
             res.writeHead(200, corsHeaders);
@@ -3151,6 +3240,7 @@ async function handleAgyConfigRequest(urlPath, req, res, rawBodyBuf) {
             }
             saveRawAgyConfigText(JSON.stringify(current, null, 2));
             const synced = await syncAdminSettingsFiles(boundGatewayPort);
+            await hotReloadLsIfApiKeyMode();
             res.writeHead(200, corsHeaders);
             return res.end(JSON.stringify({
                 success: true,
@@ -3852,7 +3942,15 @@ function _AgyApiKeysScreen(){
       [banner,setBanner]=(0,A.useState)(null);
 
   var refreshModelsInHub=()=>{
-    try{window.dispatchEvent(new Event("focus"))}catch{}
+    (async()=>{
+      try{
+        if(window.__agyCore){
+          await window.__agyCore.authService?.checkCurrentAuthStatus?.();
+          await window.__agyCore.cloudCodeService?.loadCodeAssist?.(void 0,void 0,!0);
+        }
+        window.dispatchEvent(new Event("focus"));
+      }catch{}
+    })();
   };
 
   var applyServerSummary=j=>{
