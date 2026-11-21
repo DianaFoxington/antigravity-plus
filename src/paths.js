@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execFileSync, spawn } = require("child_process");
+const { readSingleFileFromAsar } = require("./asar");
 
 const PERSISTENT_HOME_DIR = path.join(os.homedir(), ".gemini", "agy-unlocker");
 const PERSISTENT_STATE_FILE = path.join(PERSISTENT_HOME_DIR, "patch-state.json");
@@ -211,7 +212,47 @@ function readAppVersion(layout) {
             return JSON.parse(fs.readFileSync(pkgPath, "utf8")).version || "unknown";
         }
     } catch {}
+    for (const asarCandidate of [layout.asarPath, layout.asarBakPath]) {
+        try {
+            if (asarCandidate && fs.existsSync(asarCandidate)) {
+                const buf = readSingleFileFromAsar(asarCandidate, "package.json");
+                if (buf) {
+                    return JSON.parse(buf.toString("utf8")).version || "unknown";
+                }
+            }
+        } catch {}
+    }
     return "unknown";
+}
+
+function listUnixAntigravityPids() {
+    try {
+        const out = execFileSync("ps", ["-ax", "-o", "pid=,comm=,args="], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"]
+        });
+        const selfPids = new Set([process.pid, process.ppid]);
+        const pids = [];
+        for (const line of String(out || "").split(/\r?\n/)) {
+            const m = /^\s*(\d+)\s+(\S+)\s*(.*)$/.exec(line);
+            if (!m) continue;
+            const pid = Number(m[1]);
+            const comm = path.basename(m[2]);
+            const args = m[3] || "";
+            if (!pid || selfPids.has(pid)) continue;
+            if (/^(node|bash|sh|zsh|curl|sudo)$/i.test(comm)) continue;
+            if (
+                /^(Antigravity|antigravity|language_server)$/i.test(comm) ||
+                /Antigravity\.app\/Contents\/MacOS\/Antigravity/.test(args) ||
+                /\/resources\/bin\/language_server\b/.test(args)
+            ) {
+                pids.push(pid);
+            }
+        }
+        return pids;
+    } catch {
+        return [];
+    }
 }
 
 function isAntigravityRunning() {
@@ -228,11 +269,7 @@ function isAntigravityRunning() {
             });
             return /language_server\.exe/i.test(outLs);
         }
-        const out = execFileSync("pgrep", ["-f", "Antigravity|language_server"], {
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "ignore"]
-        });
-        return Boolean(out.trim());
+        return listUnixAntigravityPids().length > 0;
     } catch {
         return false;
     }
@@ -246,10 +283,16 @@ function stopRunningAntigravity() {
             } catch {}
         }
     } else {
-        for (const pat of ["Antigravity", "language_server"]) {
-            try {
-                execFileSync("pkill", ["-f", pat], { stdio: "ignore" });
-            } catch {}
+        const pids = listUnixAntigravityPids();
+        for (const pid of pids) {
+            try { process.kill(pid, "SIGTERM"); } catch {}
+        }
+        if (pids.length > 0) {
+            const deadline = Date.now() + 800;
+            while (Date.now() < deadline && listUnixAntigravityPids().length > 0) {}
+            for (const pid of listUnixAntigravityPids()) {
+                try { process.kill(pid, "SIGKILL"); } catch {}
+            }
         }
     }
 }

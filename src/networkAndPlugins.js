@@ -161,6 +161,8 @@ function openHttpConnectTunnel(proxy, targetHost, targetPort, timeoutMs = 15000)
                 const extra = headerBuf.slice(endIdx + 4);
                 if (extra.length > 0) connectSocket.unshift(extra);
                 connectSocket.setTimeout(0);
+                connectSocket.removeListener("error", fail);
+                connectSocket.on("error", () => {});
                 settled = true;
                 resolve(connectSocket);
             };
@@ -210,16 +212,41 @@ function openSocks5Tunnel(proxy, targetHost, targetPort, timeoutMs = 15000) {
                 const chosen = methodResp[1];
 
                 const sendConnectCmd = () => {
-                    const hostBytes = Buffer.from(targetHost, "utf8");
+                    const cleanHost = String(targetHost || "").replace(/^\[|\]$/g, "");
                     const portBuf = Buffer.alloc(2);
                     portBuf.writeUInt16BE(Number(targetPort), 0);
-                    // ATYP = 0x03 (domain name, resolved remotely by SOCKS5 server -> leak-free DNS!)
-                    const req = Buffer.concat([
-                        Buffer.from([0x05, 0x01, 0x00, 0x03, hostBytes.length]),
-                        hostBytes,
-                        portBuf
-                    ]);
+                    const ipVer = net.isIP(cleanHost);
+                    let addrPart;
+                    if (ipVer === 4) {
+                        addrPart = Buffer.from([0x01, ...cleanHost.split(".").map(x => Number(x) & 0xff)]);
+                    } else if (ipVer === 6) {
+                        // Expand IPv6 into 16 bytes
+                        const [left, right] = cleanHost.split("::");
+                        const lParts = left ? left.split(":").filter(Boolean) : [];
+                        const rParts = right !== undefined ? (right ? right.split(":").filter(Boolean) : []) : [];
+                        const fill = right !== undefined ? Math.max(0, 8 - lParts.length - rParts.length) : 0;
+                        const groups = [...lParts, ...Array(fill).fill("0"), ...rParts];
+                        const v6 = Buffer.alloc(17);
+                        v6[0] = 0x04;
+                        for (let gi = 0; gi < 8; gi++) {
+                            v6.writeUInt16BE(parseInt(groups[gi] || "0", 16) & 0xffff, 1 + gi * 2);
+                        }
+                        addrPart = v6;
+                    } else {
+                        const hostBytes = Buffer.from(cleanHost, "utf8").slice(0, 255);
+                        // ATYP = 0x03 (domain name, resolved remotely by SOCKS5 server -> leak-free DNS!)
+                        addrPart = Buffer.concat([Buffer.from([0x03, hostBytes.length]), hostBytes]);
+                    }
+                    const req = Buffer.concat([Buffer.from([0x05, 0x01, 0x00]), addrPart, portBuf]);
                     sock.write(req);
+
+                    const finishSocks = () => {
+                        sock.setTimeout(0);
+                        sock.removeListener("error", fail);
+                        sock.on("error", () => {});
+                        settled = true;
+                        resolve(sock);
+                    };
 
                     readExact(4, (hdr) => {
                         if (hdr[1] !== 0x00) {
@@ -227,12 +254,12 @@ function openSocks5Tunnel(proxy, targetHost, targetPort, timeoutMs = 15000) {
                         }
                         const atyp = hdr[3];
                         if (atyp === 0x01) {
-                            readExact(4 + 2, () => { sock.setTimeout(0); settled = true; resolve(sock); });
+                            readExact(4 + 2, finishSocks);
                         } else if (atyp === 0x04) {
-                            readExact(16 + 2, () => { sock.setTimeout(0); settled = true; resolve(sock); });
+                            readExact(16 + 2, finishSocks);
                         } else if (atyp === 0x03) {
                             readExact(1, (lenBuf) => {
-                                readExact(lenBuf[0] + 2, () => { sock.setTimeout(0); settled = true; resolve(sock); });
+                                readExact(lenBuf[0] + 2, finishSocks);
                             });
                         } else {
                             fail(new Error("Unknown SOCKS5 address type"));
@@ -821,6 +848,9 @@ function extractZipToFolderWithStrip(zipBuf, destDir, subPathFilter = "") {
             continue;
         }
         if (ent.localHeaderOffset + 30 > zipBuf.length || zipBuf.readUInt32LE(ent.localHeaderOffset) !== 0x04034b50) {
+            continue;
+        }
+        if (ent.method !== 0 && ent.method !== 8) {
             continue;
         }
         const lNameLen = zipBuf.readUInt16LE(ent.localHeaderOffset + 26);

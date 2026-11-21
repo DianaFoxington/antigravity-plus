@@ -62,6 +62,10 @@ function syncRuntimeToPersistentHome(repoRootDir) {
                 fs.copyFileSync(src, dst);
             }
         }
+        // Remove legacy uncompressed locales.json if locales.json.br is now present
+        if (fs.existsSync(path.join(runtimeSrcDir, "locales.json.br")) && fs.existsSync(path.join(runtimeSrcDir, "locales.json"))) {
+            try { fs.unlinkSync(path.join(runtimeSrcDir, "locales.json")); } catch {}
+        }
     }
 
     return path.join(runtimeDir, "cli.js");
@@ -79,11 +83,14 @@ function checkAndRepatchIfUpdated(options = {}) {
         return { action: "no_install_found" };
     }
 
-    // Fast path: check saved stat fingerprint before reading 187MB binary!
+    // Fast path: check saved stat fingerprint before reading 200MB binary!
     const hasLiveAsar = fs.existsSync(layout.asarPath);
-    const hasGatewayJs = fs.existsSync(path.join(layout.appDir, "dist", "gatewayForwarder.js"));
+    const hasCoreDistFiles =
+        fs.existsSync(path.join(layout.appDir, "dist", "gatewayForwarder.js")) &&
+        fs.existsSync(path.join(layout.appDir, "dist", "networkAndPlugins.js")) &&
+        fs.existsSync(path.join(layout.appDir, "dist", "uiLocalization.js"));
 
-    if (!hasLiveAsar && hasGatewayJs && fs.existsSync(PERSISTENT_STATE_FILE) && fs.existsSync(layout.lsBinaryPath)) {
+    if (!hasLiveAsar && hasCoreDistFiles && fs.existsSync(PERSISTENT_STATE_FILE) && fs.existsSync(layout.lsBinaryPath)) {
         try {
             const saved = JSON.parse(fs.readFileSync(PERSISTENT_STATE_FILE, "utf8"));
             const st = fs.statSync(layout.lsBinaryPath);

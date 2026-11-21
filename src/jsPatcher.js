@@ -303,7 +303,7 @@ function patchLanguageServerJs(distDir) {
                 "        delete env['AGY_LLM_GATEWAY_HEADERS'];",
                 "        if (authMode === 'apikey') {",
                 "            const apiKey = (0, gatewayForwarder_1.getActiveApiKey)();",
-                "            env['AGY_LLM_GATEWAY_URL'] = `https://localhost:${gw.port}`;",
+                "            env['AGY_LLM_GATEWAY_URL'] = `https://127.0.0.1:${gw.port}`;",
                 "            env['AGY_LLM_GATEWAY_WIRE_PROTOCOL'] = 'genai';",
                 "            env['AGY_LLM_GATEWAY_CA_CERT'] = gw.certPath;",
                 "            env['GEMINI_API_KEY'] = apiKey;",
@@ -338,6 +338,10 @@ function patchLanguageServerJs(distDir) {
             src = nextOAuthEnv;
             changed = true;
         }
+    }
+    if (src.includes("`https://localhost:${gw.port}`")) {
+        src = src.replace("`https://localhost:${gw.port}`", "`https://127.0.0.1:${gw.port}`");
+        changed = true;
     }
 
     // 5b. Route OAuth URLs directly to Chrome with `prompt=select_account`
@@ -417,10 +421,10 @@ function patchLanguageServerJs(distDir) {
                 "    }",
                 "    _lsPort = handle.port;",
                 "    const samePort = prevPort > 0 && _lsPort === prevPort;",
-                "    if (!samePort && options.onPortChanged) {",
+                "    if (!samePort && options && options.onPortChanged) {",
                 "        options.onPortChanged(_lsPort);",
                 "    }",
-                "    monitorLsCrashInternal(handle, _lsPort, csrf, options);",
+                "    monitorLsCrashInternal(handle, _lsPort, csrf, options || {});",
                 "    return { restarted: true, samePort, port: _lsPort };",
                 "}",
                 "(0, gatewayForwarder_1.registerLsHotRestart)(hotRestartLanguageServer);",
@@ -445,7 +449,7 @@ function patchLanguageServerJs(distDir) {
                 "    if (!_uiRedirectRegistered) {",
                 "        _uiRedirectRegistered = true;",
                 "        electron_1.session.defaultSession.webRequest.onBeforeRequest(",
-                "            { urls: ['https://127.0.0.1:*/main.js*'] },",
+                "            { urls: ['https://127.0.0.1:*/main.js*', 'https://localhost:*/main.js*'] },",
                 "            (details, callback) => {",
                 "                try {",
                 "                    const parsed = new URL(details.url);",
@@ -490,6 +494,10 @@ function applyAllJsPatches(appDir, options = {}) {
     fs.copyFileSync(LOCALIZATION_SOURCE_FILE, path.join(distDir, "uiLocalization.js"));
     if (fs.existsSync(LOCALES_BR_FILE)) {
         fs.copyFileSync(LOCALES_BR_FILE, path.join(distDir, "locales.json.br"));
+        const staleRawLocales = path.join(distDir, "locales.json");
+        if (fs.existsSync(staleRawLocales)) {
+            try { fs.unlinkSync(staleRawLocales); } catch {}
+        }
     } else if (fs.existsSync(LOCALES_JSON_FILE)) {
         fs.copyFileSync(LOCALES_JSON_FILE, path.join(distDir, "locales.json"));
     }

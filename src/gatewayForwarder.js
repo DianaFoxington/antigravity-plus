@@ -16,6 +16,7 @@ const path = require("path");
 const os = require("os");
 const zlib = require("zlib");
 const crypto = require("crypto");
+const { StringDecoder } = require("string_decoder");
 const { execFileSync, spawn } = require("child_process");
 const {
     loadPlusSettings,
@@ -1115,9 +1116,9 @@ function getBoundGatewayPort() {
 // JSONC Parser & ~/.gemini/antigravity.json Configuration Manager
 // ---------------------------------------------------------------------------
 function stripJsonCommentsAndTrailingCommas(rawText) {
-    let out = "";
+    // Pass 1: Strip // and /* */ comments while preserving "..." JSON string literals verbatim
+    let noComments = "";
     let inStr = false;
-    let strQuote = '"';
     let i = 0;
     const n = rawText.length;
 
@@ -1125,20 +1126,19 @@ function stripJsonCommentsAndTrailingCommas(rawText) {
         const ch = rawText[i];
         const next = i + 1 < n ? rawText[i + 1] : "";
         if (inStr) {
-            out += ch;
+            noComments += ch;
             if (ch === "\\" && i + 1 < n) {
-                out += rawText[i + 1];
+                noComments += rawText[i + 1];
                 i += 2;
                 continue;
             }
-            if (ch === strQuote) inStr = false;
+            if (ch === '"') inStr = false;
             i++;
             continue;
         }
-        if (ch === '"' || ch === "'") {
+        if (ch === '"') {
             inStr = true;
-            strQuote = ch;
-            out += ch;
+            noComments += ch;
             i++;
             continue;
         }
@@ -1150,13 +1150,49 @@ function stripJsonCommentsAndTrailingCommas(rawText) {
         if (ch === "/" && next === "*") {
             i += 2;
             while (i + 1 < n && !(rawText[i] === "*" && rawText[i + 1] === "/")) i++;
-            i += 2;
+            i = (i + 1 < n) ? i + 2 : n;
             continue;
+        }
+        noComments += ch;
+        i++;
+    }
+
+    // Pass 2: Strip trailing commas before } or ] ONLY outside "..." string literals
+    let out = "";
+    inStr = false;
+    i = 0;
+    const m = noComments.length;
+    while (i < m) {
+        const ch = noComments[i];
+        if (inStr) {
+            out += ch;
+            if (ch === "\\" && i + 1 < m) {
+                out += noComments[i + 1];
+                i += 2;
+                continue;
+            }
+            if (ch === '"') inStr = false;
+            i++;
+            continue;
+        }
+        if (ch === '"') {
+            inStr = true;
+            out += ch;
+            i++;
+            continue;
+        }
+        if (ch === ",") {
+            let look = i + 1;
+            while (look < m && /\s/.test(noComments[look])) look++;
+            if (look < m && (noComments[look] === "}" || noComments[look] === "]")) {
+                i++;
+                continue;
+            }
         }
         out += ch;
         i++;
     }
-    return out.replace(/,\s*([}\]])/g, "$1");
+    return out;
 }
 
 function parseJsonc(rawText) {
@@ -1506,7 +1542,7 @@ async function buildDynamicAdminSettings(gwPort) {
 
     return {
         gateway: {
-            url: `https://localhost:${gwPort}`,
+            url: `https://127.0.0.1:${gwPort}`,
             wireProtocol: "genai"
         },
         models: {
@@ -1642,8 +1678,13 @@ function sanitizeJsonSchemaForOpenAI(schema) {
     return out;
 }
 
-function convertGenAiRequestToOpenAi(genAiBody, route, isStreaming) {
+function convertGenAiRequestToOpenAi(rawGenAiBody, route, isStreaming) {
+    const genAiBody = sanitizeTrailingModelTurn(JSON.parse(JSON.stringify(rawGenAiBody || {})));
     const messages = [];
+    const provSig = `${route.providerId || ""} ${route.baseURL || ""}`.toLowerCase();
+    const usesReasoningContentField =
+        route.interleaved === "reasoning_content" ||
+        (route.interleaved !== "none" && /deepseek|moonshot|kimi|dashscope|aliyuncs|z\.ai|bigmodel|siliconflow/.test(provSig));
 
     // 1. System Instruction
     if (genAiBody?.systemInstruction?.parts) {
@@ -1692,8 +1733,9 @@ function convertGenAiRequestToOpenAi(genAiBody, route, isStreaming) {
                 }
             }
 
+            if (!textBuf && !toolCalls.length && !thoughtBuf) continue;
             const msg = { role: "assistant", content: textBuf || (toolCalls.length ? null : "") };
-            if (route.supportsThinking || route.interleaved === "reasoning_content" || thoughtBuf) {
+            if (usesReasoningContentField && (route.supportsThinking || thoughtBuf)) {
                 msg.reasoning_content = thoughtBuf || "";
             }
             if (toolCalls.length > 0) {
@@ -1739,7 +1781,7 @@ function convertGenAiRequestToOpenAi(genAiBody, route, isStreaming) {
         messages,
         stream: isStreaming
     };
-    if (isStreaming) {
+    if (isStreaming && !/mistral|perplexity|cohere/i.test(provSig)) {
         openAiPayload.stream_options = { include_usage: true };
     }
 
@@ -1764,11 +1806,21 @@ function convertGenAiRequestToOpenAi(genAiBody, route, isStreaming) {
 
     // 4. Generation Config
     const gc = genAiBody?.generationConfig || {};
-    if (typeof gc.temperature === "number") openAiPayload.temperature = gc.temperature;
-    if (typeof gc.topP === "number") openAiPayload.top_p = gc.topP;
+    const isOSeriesModel = /^(o1|o3|o4|gpt-5)/i.test(String(route.upstreamModelId || ""));
+    if (typeof gc.temperature === "number" && !/^(o1|o3|o4)/i.test(String(route.upstreamModelId || ""))) {
+        openAiPayload.temperature = gc.temperature;
+    }
+    if (typeof gc.topP === "number" && !/^(o1|o3|o4)/i.test(String(route.upstreamModelId || ""))) {
+        openAiPayload.top_p = gc.topP;
+    }
     if (Array.isArray(gc.stopSequences) && gc.stopSequences.length > 0) openAiPayload.stop = gc.stopSequences;
     const reqMaxOut = Number(gc.maxOutputTokens) || route.maxOutputTokens || 16384;
-    openAiPayload.max_tokens = Math.min(reqMaxOut, route.maxOutputTokens || reqMaxOut);
+    const cappedOut = Math.min(reqMaxOut, route.maxOutputTokens || reqMaxOut);
+    if (isOSeriesModel && (/api\.openai\.com/.test(provSig) || route.protocol === "azure-openai")) {
+        openAiPayload.max_completion_tokens = cappedOut;
+    } else {
+        openAiPayload.max_tokens = cappedOut;
+    }
 
     return openAiPayload;
 }
@@ -2028,8 +2080,9 @@ function forwardToOpenAiCompatibleProvider(req, res, route, genAiBody, isStreami
             }
         };
 
+        const oaiUtf8Dec = new StringDecoder("utf8");
         upRes.on("data", (chunk) => {
-            sseBuf += chunk.toString("utf8");
+            sseBuf += oaiUtf8Dec.write(chunk);
             let nlIdx;
             while ((nlIdx = sseBuf.indexOf("\n")) !== -1) {
                 const line = sseBuf.slice(0, nlIdx).trim();
@@ -2078,6 +2131,8 @@ function forwardToOpenAiCompatibleProvider(req, res, route, genAiBody, isStreami
         });
 
         upRes.on("end", () => {
+            const rem = oaiUtf8Dec.end();
+            if (rem) sseBuf += rem;
             flushFinalSse();
             res.end();
         });
@@ -2100,7 +2155,18 @@ function forwardToOpenAiCompatibleProvider(req, res, route, genAiBody, isStreami
 // ---------------------------------------------------------------------------
 // Bidirectional Google GenAI <-> Anthropic Messages (/v1/messages) Translator
 // ---------------------------------------------------------------------------
-function forwardToAnthropicMessagesProvider(req, res, route, genAiBody, isStreaming, selectedEffort, keyIdx = 0, orderedKeys = null) {
+// Session cache of Anthropic thinking cryptographic signatures keyed by tool_use_id or thought text hash
+const anthropicThinkingSigCache = new Map();
+function rememberAnthropicThinkingSig(keyStr, thinkingText, signature) {
+    if (!keyStr || !signature) return;
+    if (anthropicThinkingSigCache.size > 400) {
+        const firstKey = anthropicThinkingSigCache.keys().next().value;
+        anthropicThinkingSigCache.delete(firstKey);
+    }
+    anthropicThinkingSigCache.set(keyStr, { thinking: thinkingText || "", signature });
+}
+
+function forwardToAnthropicMessagesProvider(req, res, route, rawGenAiBody, isStreaming, selectedEffort, keyIdx = 0, orderedKeys = null) {
     const keysList = orderedKeys || getOrderedApiKeysForModel(route.providerId, route.apiKeys, route.upstreamModelId);
     if (!keysList.length) {
         res.writeHead(401, { "Content-Type": "application/json" });
@@ -2109,6 +2175,7 @@ function forwardToAnthropicMessagesProvider(req, res, route, genAiBody, isStream
         }));
     }
 
+    const genAiBody = sanitizeTrailingModelTurn(JSON.parse(JSON.stringify(rawGenAiBody || {})));
     const reqStartTs = Date.now();
     let firstTokenTs = 0;
     const activeKey = keysList[keyIdx];
@@ -2120,6 +2187,7 @@ function forwardToAnthropicMessagesProvider(req, res, route, genAiBody, isStream
     const anthropicMessages = [];
     const pendingToolIdsByName = new Map();
     let callSeq = 1;
+    let hasUnsignedAssistantToolTurn = false;
 
     for (const turn of (genAiBody?.contents || [])) {
         const role = turn.role === "model" ? "assistant" : "user";
@@ -2127,18 +2195,23 @@ function forwardToAnthropicMessagesProvider(req, res, route, genAiBody, isStream
         const blocks = [];
 
         if (role === "assistant") {
+            let turnThoughtText = "";
+            const otherBlocks = [];
+            const turnToolIds = [];
+
             for (const p of parts) {
                 if (p.thought && typeof p.text === "string") {
-                    continue;
+                    turnThoughtText += p.text;
                 } else if (typeof p.text === "string" && p.text.length > 0) {
-                    blocks.push({ type: "text", text: p.text });
+                    otherBlocks.push({ type: "text", text: p.text });
                 } else if (p.functionCall) {
                     const fnName = p.functionCall.name || "tool";
                     const callId = (p.functionCall.id || `toolu_${callSeq++}_${fnName}`).replace(/[^a-zA-Z0-9_-]/g, "_");
                     const q = pendingToolIdsByName.get(fnName) || [];
                     q.push(callId);
                     pendingToolIdsByName.set(fnName, q);
-                    blocks.push({
+                    turnToolIds.push(callId);
+                    otherBlocks.push({
                         type: "tool_use",
                         id: callId,
                         name: fnName,
@@ -2146,6 +2219,29 @@ function forwardToAnthropicMessagesProvider(req, res, route, genAiBody, isStream
                     });
                 }
             }
+
+            let signedThinkingBlock = null;
+            for (const tid of turnToolIds) {
+                const cached = anthropicThinkingSigCache.get(`tool:${tid}`);
+                if (cached && cached.signature) {
+                    signedThinkingBlock = { type: "thinking", thinking: cached.thinking || turnThoughtText, signature: cached.signature };
+                    break;
+                }
+            }
+            if (!signedThinkingBlock && turnThoughtText) {
+                const thHash = crypto.createHash("sha1").update(turnThoughtText).digest("hex");
+                const cached = anthropicThinkingSigCache.get(`hash:${thHash}`);
+                if (cached && cached.signature) {
+                    signedThinkingBlock = { type: "thinking", thinking: turnThoughtText, signature: cached.signature };
+                }
+            }
+
+            if (signedThinkingBlock) {
+                blocks.push(signedThinkingBlock);
+            } else if (turnToolIds.length > 0) {
+                hasUnsignedAssistantToolTurn = true;
+            }
+            blocks.push(...otherBlocks);
         } else {
             for (const p of parts) {
                 if (p.functionResponse) {
@@ -2177,10 +2273,31 @@ function forwardToAnthropicMessagesProvider(req, res, route, genAiBody, isStream
             const prev = anthropicMessages[anthropicMessages.length - 1];
             if (prev && prev.role === role) {
                 prev.content.push(...blocks);
+                if (role === "user") {
+                    // Anthropic requires all tool_result blocks at the start of user content
+                    const trs = prev.content.filter(b => b.type === "tool_result");
+                    const rest = prev.content.filter(b => b.type !== "tool_result");
+                    prev.content = [...trs, ...rest];
+                }
             } else {
-                anthropicMessages.push({ role, content: blocks });
+                if (role === "user") {
+                    const trs = blocks.filter(b => b.type === "tool_result");
+                    const rest = blocks.filter(b => b.type !== "tool_result");
+                    anthropicMessages.push({ role, content: [...trs, ...rest] });
+                } else {
+                    anthropicMessages.push({ role, content: blocks });
+                }
             }
         }
+    }
+
+    // Anthropic strictly requires messages[0].role === "user"
+    while (anthropicMessages.length > 0 && anthropicMessages[0].role !== "user") {
+        anthropicMessages.shift();
+    }
+    // Prefilling trailing assistant messages is disallowed when thinking is enabled
+    if (route.supportsThinking && anthropicMessages.length > 1 && anthropicMessages[anthropicMessages.length - 1].role === "assistant") {
+        anthropicMessages.push({ role: "user", content: [{ type: "text", text: "Continue." }] });
     }
 
     const anthropicTools = [];
@@ -2205,12 +2322,12 @@ function forwardToAnthropicMessagesProvider(req, res, route, genAiBody, isStream
     };
     if (systemText) bodyObj.system = systemText;
     if (anthropicTools.length > 0) bodyObj.tools = anthropicTools;
-    if (route.supportsThinking) {
+    if (route.supportsThinking && !hasUnsignedAssistantToolTurn) {
         const budget = Math.min((selectedEffort && EFFORT_BUDGET_MAP[selectedEffort]) || 8192, Math.max(1024, maxOut - 1024));
         if (maxOut > 2048) {
             bodyObj.thinking = { type: "enabled", budget_tokens: budget };
         }
-    } else if (typeof gc.temperature === "number") {
+    } else if (!route.supportsThinking && typeof gc.temperature === "number") {
         bodyObj.temperature = gc.temperature;
     }
 
@@ -2272,10 +2389,23 @@ function forwardToAnthropicMessagesProvider(req, res, route, genAiBody, isStream
                 try {
                     const aj = JSON.parse(Buffer.concat(chunks).toString("utf8"));
                     const parts = [];
+                    let lastNonStreamThinking = null;
                     for (const b of (aj.content || [])) {
-                        if (b.type === "thinking") parts.push({ thought: true, text: b.thinking || "" });
-                        else if (b.type === "text") parts.push({ text: b.text || "" });
-                        else if (b.type === "tool_use") parts.push({ functionCall: { id: b.id, name: b.name, args: b.input || {} } });
+                        if (b.type === "thinking") {
+                            parts.push({ thought: true, text: b.thinking || "" });
+                            if (b.signature && b.thinking) {
+                                lastNonStreamThinking = { thinking: b.thinking, signature: b.signature };
+                                const thHash = crypto.createHash("sha1").update(b.thinking).digest("hex");
+                                rememberAnthropicThinkingSig(`hash:${thHash}`, b.thinking, b.signature);
+                            }
+                        } else if (b.type === "text") {
+                            parts.push({ text: b.text || "" });
+                        } else if (b.type === "tool_use") {
+                            if (lastNonStreamThinking && b.id) {
+                                rememberAnthropicThinkingSig(`tool:${String(b.id).replace(/[^a-zA-Z0-9_-]/g, "_")}`, lastNonStreamThinking.thinking, lastNonStreamThinking.signature);
+                            }
+                            parts.push({ functionCall: { id: b.id, name: b.name, args: b.input || {} } });
+                        }
                     }
                     if (!parts.length) parts.push({ text: "" });
                     const pTok = aj.usage?.input_tokens || Math.round(outBuf.length / 4);
@@ -2316,6 +2446,8 @@ function forwardToAnthropicMessagesProvider(req, res, route, genAiBody, isStream
         let promptTok = Math.round(outBuf.length / 4);
         let complTok = 0;
         const activeToolBlocks = new Map();
+        let streamThinkingText = "";
+        let streamThinkingSig = "";
         let doneSent = false;
 
         const emitFrame = (parts, finishReason = null) => {
@@ -2342,9 +2474,16 @@ function forwardToAnthropicMessagesProvider(req, res, route, genAiBody, isStream
         const finishAnthropicStream = () => {
             if (doneSent) return;
             doneSent = true;
+            if (streamThinkingSig && streamThinkingText) {
+                const thHash = crypto.createHash("sha1").update(streamThinkingText).digest("hex");
+                rememberAnthropicThinkingSig(`hash:${thHash}`, streamThinkingText, streamThinkingSig);
+            }
             if (activeToolBlocks.size > 0) {
                 const tcParts = [];
                 for (const [, tb] of Array.from(activeToolBlocks.entries()).sort((a, b) => a[0] - b[0])) {
+                    if (streamThinkingSig && tb.id) {
+                        rememberAnthropicThinkingSig(`tool:${String(tb.id).replace(/[^a-zA-Z0-9_-]/g, "_")}`, streamThinkingText, streamThinkingSig);
+                    }
                     let parsed = {};
                     try { parsed = JSON.parse(tb.jsonBuf || "{}"); } catch {}
                     tcParts.push({ functionCall: { id: tb.id, name: tb.name, args: parsed } });
@@ -2366,8 +2505,9 @@ function forwardToAnthropicMessagesProvider(req, res, route, genAiBody, isStream
             emitFrame([{ text: "" }], "STOP");
         };
 
+        const anthUtf8Dec = new StringDecoder("utf8");
         upRes.on("data", (chunk) => {
-            sseBuf += chunk.toString("utf8");
+            sseBuf += anthUtf8Dec.write(chunk);
             let nl;
             while ((nl = sseBuf.indexOf("\n")) !== -1) {
                 const line = sseBuf.slice(0, nl).trim();
@@ -2389,8 +2529,11 @@ function forwardToAnthropicMessagesProvider(req, res, route, genAiBody, isStream
                 } else if (ev.type === "content_block_delta") {
                     const dl = ev.delta || {};
                     if (dl.type === "thinking_delta" && dl.thinking) {
+                        streamThinkingText += dl.thinking;
                         complTok += Math.max(1, Math.round(dl.thinking.length / 4));
                         emitFrame([{ thought: true, text: dl.thinking }]);
+                    } else if (dl.type === "signature_delta" && typeof dl.signature === "string") {
+                        streamThinkingSig += dl.signature;
                     } else if (dl.type === "text_delta" && dl.text) {
                         complTok += Math.max(1, Math.round(dl.text.length / 4));
                         emitFrame([{ text: dl.text }]);
@@ -2405,7 +2548,12 @@ function forwardToAnthropicMessagesProvider(req, res, route, genAiBody, isStream
                 }
             }
         });
-        upRes.on("end", () => { finishAnthropicStream(); res.end(); });
+        upRes.on("end", () => {
+            const rem = anthUtf8Dec.end();
+            if (rem) sseBuf += rem;
+            finishAnthropicStream();
+            res.end();
+        });
         upRes.on("error", () => { finishAnthropicStream(); res.end(); });
     });
 
@@ -2427,13 +2575,13 @@ async function testProviderEndpointLive(protocol, baseURL, apiKey, sampleModel) 
 
     if (protocol === "google-genai") {
         return new Promise((resolve) => {
-            const req = https.request({
+            const req = createProxiedRequest(true, {
                 hostname: "generativelanguage.googleapis.com",
                 port: 443,
                 path: "/v1beta/models?pageSize=20",
                 method: "GET",
                 headers: { "x-goog-api-key": apiKey },
-                timeout: 8000
+                timeout: 10000
             }, (res) => {
                 let raw = "";
                 res.on("data", d => raw += d);
@@ -2447,34 +2595,37 @@ async function testProviderEndpointLive(protocol, baseURL, apiKey, sampleModel) 
                     resolve({ valid: false, latencyMs: ms, message: msg });
                 });
             });
-            req.on("timeout", () => { req.destroy(); resolve({ valid: false, latencyMs: 8000, message: "Timed out" }); });
+            req.on("timeout", () => { req.destroy(); resolve({ valid: false, latencyMs: 10000, message: "Timed out" }); });
             req.on("error", e => resolve({ valid: false, latencyMs: Date.now() - started, message: e.message }));
             req.end();
         });
     }
 
-    // OpenAI-compatible provider test (/models or lightweight check)
+    // Anthropic / Azure / OpenAI-compatible provider test (routed through built-in HTTP/SOCKS5 proxy if enabled)
     return new Promise((resolve) => {
         let u;
         try {
-            const b = baseURL.endsWith("/") ? baseURL : `${baseURL}/`;
+            const defBase = protocol === "anthropic-messages" ? "https://api.anthropic.com/v1" : baseURL;
+            const b = defBase.endsWith("/") ? defBase : `${defBase}/`;
             u = new URL("models", b);
         } catch (e) {
             return resolve({ valid: false, latencyMs: 0, message: `Invalid baseURL: ${e.message}` });
         }
         const isHttp = u.protocol === "http:";
-        const transport = isHttp ? http : https;
-        const req = transport.request({
+        const authHeaders = protocol === "anthropic-messages"
+            ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01" }
+            : (protocol === "azure-openai" ? { "api-key": apiKey } : { "Authorization": `Bearer ${apiKey}` });
+        const req = createProxiedRequest(!isHttp, {
             protocol: u.protocol,
             hostname: u.hostname,
             port: u.port || (isHttp ? 80 : 443),
             path: u.pathname + u.search,
             method: "GET",
             headers: {
-                "Authorization": `Bearer ${apiKey}`,
-                "User-Agent": "antigravity/2.29.1"
+                ...authHeaders,
+                "User-Agent": "antigravity/2.32.1"
             },
-            timeout: 8000
+            timeout: 10000
         }, (res) => {
             let raw = "";
             res.on("data", d => raw += d);
@@ -2491,7 +2642,7 @@ async function testProviderEndpointLive(protocol, baseURL, apiKey, sampleModel) 
                 resolve({ valid: false, latencyMs: ms, message: msg });
             });
         });
-        req.on("timeout", () => { req.destroy(); resolve({ valid: false, latencyMs: 8000, message: "Timed out" }); });
+        req.on("timeout", () => { req.destroy(); resolve({ valid: false, latencyMs: 10000, message: "Timed out" }); });
         req.on("error", e => resolve({ valid: false, latencyMs: Date.now() - started, message: e.message }));
         req.end();
     });
@@ -2501,13 +2652,13 @@ async function discoverProviderModelsLive(protocol, baseURL, apiKey) {
     if (!apiKey) throw new Error("Enter an API key first to fetch models.");
     if (protocol === "google-genai") {
         return new Promise((resolve, reject) => {
-            const req = https.request({
+            const req = createProxiedRequest(true, {
                 hostname: "generativelanguage.googleapis.com",
                 port: 443,
                 path: "/v1beta/models?pageSize=100",
                 method: "GET",
                 headers: { "x-goog-api-key": apiKey },
-                timeout: 10000
+                timeout: 12000
             }, (res) => {
                 let raw = "";
                 res.on("data", d => raw += d);
@@ -2539,24 +2690,27 @@ async function discoverProviderModelsLive(protocol, baseURL, apiKey) {
     return new Promise((resolve, reject) => {
         let u;
         try {
-            const b = baseURL.endsWith("/") ? baseURL : `${baseURL}/`;
+            const defBase = protocol === "anthropic-messages" ? (baseURL || "https://api.anthropic.com/v1") : baseURL;
+            const b = defBase.endsWith("/") ? defBase : `${defBase}/`;
             u = new URL("models", b);
         } catch (e) {
             return reject(new Error(`Invalid Base URL: ${e.message}`));
         }
         const isHttp = u.protocol === "http:";
-        const transport = isHttp ? http : https;
-        const req = transport.request({
+        const authHeaders = protocol === "anthropic-messages"
+            ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01" }
+            : (protocol === "azure-openai" ? { "api-key": apiKey } : { "Authorization": `Bearer ${apiKey}` });
+        const req = createProxiedRequest(!isHttp, {
             protocol: u.protocol,
             hostname: u.hostname,
             port: u.port || (isHttp ? 80 : 443),
             path: u.pathname + u.search,
             method: "GET",
             headers: {
-                "Authorization": `Bearer ${apiKey}`,
-                "User-Agent": "antigravity/2.29.1"
+                ...authHeaders,
+                "User-Agent": "antigravity/2.32.1"
             },
-            timeout: 10000
+            timeout: 12000
         }, (res) => {
             let raw = "";
             res.on("data", d => raw += d);
@@ -2573,9 +2727,9 @@ async function discoverProviderModelsLive(protocol, baseURL, apiKey) {
                         const mid = String(m.id || m.name || "").trim();
                         return {
                             id: mid,
-                            name: String(m.name || mid),
-                            context: Number(m.context_length || m.max_model_len || m.inputTokenLimit) || 262144,
-                            output: Number(m.max_completion_tokens || m.outputTokenLimit) || 65536,
+                            name: String(m.display_name || m.name || mid),
+                            context: Number(m.context_length || m.max_model_len || m.inputTokenLimit) || 200000,
+                            output: Number(m.max_completion_tokens || m.outputTokenLimit) || 64000,
                             reasoning: true
                         };
                     }).filter(m => m.id);
@@ -3063,6 +3217,7 @@ function inspectPluginZipBufferForPreview(zipBuf) {
             if (!isReadme && !isSkill && !isMcp) continue;
 
             if (localHeaderOffset + 30 > zipBuf.length || zipBuf.readUInt32LE(localHeaderOffset) !== 0x04034b50) continue;
+            if (method !== 0 && method !== 8) continue;
             const lNameLen = zipBuf.readUInt16LE(localHeaderOffset + 26);
             const lExtraLen = zipBuf.readUInt16LE(localHeaderOffset + 28);
             const dataStart = localHeaderOffset + 30 + lNameLen + lExtraLen;
@@ -5326,16 +5481,22 @@ function patchUiMainBundleSource(rawTxt, gwBase) {
 // Live Patched UI Bundle Serving
 // ---------------------------------------------------------------------------
 function servePatchedUiBundle(lsPort, gwPort, res) {
-    const cacheKey = `v3:${gwPort}`;
-    const cached = patchedBundleCache.get(cacheKey);
-    if (cached) {
+    const cacheKey = `v4:${lsPort}:${gwPort}`;
+    const sendWithLiveAuthHeader = (baseBuf) => {
+        const dynPrefix = Buffer.from(`;if(typeof window!=="undefined")window.__AGY_CURRENT_AUTH_MODE__=${JSON.stringify(getCurrentAuthMode())};\n`, "utf8");
         res.writeHead(200, {
             "Content-Type": "application/javascript; charset=UTF-8",
-            "Content-Length": cached.length,
+            "Content-Length": dynPrefix.length + baseBuf.length,
             "Access-Control-Allow-Origin": "*",
             "Cache-Control": "no-store"
         });
-        return res.end(cached);
+        res.write(dynPrefix);
+        res.end(baseBuf);
+    };
+
+    const cached = patchedBundleCache.get(cacheKey);
+    if (cached) {
+        return sendWithLiveAuthHeader(cached);
     }
 
     https.get({
@@ -5355,13 +5516,7 @@ function servePatchedUiBundle(lsPort, gwPort, res) {
 
             const outBuf = Buffer.from(txt, "utf8");
             patchedBundleCache.set(cacheKey, outBuf);
-            res.writeHead(200, {
-                "Content-Type": "application/javascript; charset=UTF-8",
-                "Content-Length": outBuf.length,
-                "Access-Control-Allow-Origin": "*",
-                "Cache-Control": "no-store"
-            });
-            res.end(outBuf);
+            sendWithLiveAuthHeader(outBuf);
         });
     }).on("error", (err) => {
         res.writeHead(502, { "Content-Type": "text/plain" });
@@ -5479,8 +5634,9 @@ function forwardToGoogleGenAi(req, res, candidateKeys, actionSuffix, candidateMo
         res.writeHead(code, upRes.headers);
         let tailText = "";
         let liveGoogleTokensApprox = 0;
+        const gUtf8Dec = new StringDecoder("utf8");
         upRes.on("data", (chunk) => {
-            const chunkStr = chunk.toString("utf8");
+            const chunkStr = gUtf8Dec.write(chunk);
             if (!firstTokenTs && code === 200) firstTokenTs = Date.now();
             res.write(chunk);
             if (code === 200) {
@@ -5739,6 +5895,19 @@ function startServerOnPort(cert, key, portToTry) {
                 }
 
                 // Other Google GenAI REST calls (e.g. :countTokens)
+                if (/:countTokens\b/i.test(urlPath)) {
+                    const mCount = /\/models\/(.+?)(?:-(low|medium|high|max))?:countTokens/i.exec(urlPath);
+                    const cKey = mCount ? mCount[1].toLowerCase() : "";
+                    const cFull = (mCount && mCount[2]) ? `${cKey}-${mCount[2].toLowerCase()}` : cKey;
+                    const cRoute = modelRouteTable.get(cFull) || modelRouteTable.get(cKey);
+                    const activeGoogleKey = (cRoute && cRoute.protocol === "google-genai" && cRoute.apiKeys[0]) || "";
+                    if (!activeGoogleKey || (cRoute && cRoute.protocol !== "google-genai")) {
+                        const approxTokens = Math.max(1, Math.round(bodyBuf.length / 3.8));
+                        res.writeHead(200, { "Content-Type": "application/json; charset=UTF-8" });
+                        return res.end(JSON.stringify({ totalTokens: approxTokens }));
+                    }
+                }
+
                 const activeKey = getActiveApiKey();
                 if (!activeKey) {
                     res.writeHead(401, { "Content-Type": "application/json" });
@@ -5764,7 +5933,7 @@ function startServerOnPort(cert, key, portToTry) {
                 if (req.headers["accept"]) cleanHeaders["accept"] = req.headers["accept"];
                 if (outOtherBuf.length > 0) cleanHeaders["content-length"] = outOtherBuf.length;
 
-                const upReq = https.request({
+                const upReq = createProxiedRequest(true, {
                     hostname: "generativelanguage.googleapis.com",
                     port: 443,
                     path: cleanUrlPath,
